@@ -647,11 +647,7 @@ async function replaceDatabase(tmp) {
   fs.renameSync(tmp, DB_FILE);
   for (const s of ['-wal', '-shm']) fs.rmSync(tmp + s, { force: true });
   store = createStore(DB_FILE);
-  for (const f of store.allFiles()) {
-    const image = IMAGE_EXTS.includes(f.ext) || f.display_ext;
-    if (!image || fs.existsSync(thumbPath(f.id)) || !fs.existsSync(originalPath(f))) continue;
-    await makeDerivatives(f, Boolean(f.display_ext)).catch((e) => log(`thumbnail for ${f.id} failed: ${e.message}`));
-  }
+  await rebuildMissingThumbs();
   for (const [board] of streams) emit(board, 'reload', {}, null);
 }
 
@@ -735,8 +731,28 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Server error: ' + err.message });
 });
 
+// Thumbnails are not backed up (only originals are), so rebuild any that are missing,
+// e.g. after restoring data/ from a local backup.
+async function rebuildMissingThumbs() {
+  let n = 0;
+  for (const f of store.allFiles()) {
+    const image = IMAGE_EXTS.includes(f.ext) || f.display_ext;
+    if (!image || fs.existsSync(thumbPath(f.id)) || !fs.existsSync(originalPath(f))) continue;
+    try {
+      await makeDerivatives(f, Boolean(f.display_ext));
+      n++;
+    } catch (e) {
+      log(`thumbnail for ${f.id} failed: ${e.message}`);
+    }
+  }
+  if (n) log(`Rebuilt ${n} missing thumbnail(s)`);
+}
+
 const server = app.listen(PORT);
-server.on('listening', () => console.log(`ZBoard listening on http://localhost:${PORT} (data: ${DATA_DIR})`));
+server.on('listening', () => {
+  console.log(`ZBoard listening on http://localhost:${PORT} (data: ${DATA_DIR})`);
+  rebuildMissingThumbs();
+});
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE') console.error(`Port ${PORT} is already in use. Is another ZBoard (or another app) running? Stop it first.`);
   else console.error('Server failed to start:', e.message);

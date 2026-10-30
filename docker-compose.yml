@@ -1,0 +1,26 @@
+# docker compose up -d --build
+#
+# Data and backups live in named volumes by default (right for Docker Desktop: never bind-mount C:\).
+# On the Linux mini PC, point them at the disks in .env:
+#   DATA_PATH=/mnt/data/zboard
+#   BACKUP_PATH=/mnt/backup/zboard
+services:
+  zboard:
+    build: .
+    image: zboard
+    container_name: zboard
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      BACKUP_DIR: /backup
+      PORT: 3000
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - ${DATA_PATH:-zboard-data}:/data
+      - ${BACKUP_PATH:-zboard-backup}:/backup
+
+volumes:
+  zboard-data:
+  zboard-backup:

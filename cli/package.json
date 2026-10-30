@@ -1,0 +1,8 @@
+{
+  "name": "zboard-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZBoard terminal client (no dependencies). \"npm link\" here installs the zboard command, also on Windows.",
+  "bin": { "zboard": "zboard.js" },
+  "engines": { "node": ">=18" }
+}
