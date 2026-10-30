@@ -11,9 +11,11 @@
     "test": "bash test/step1.sh"
   },
   "dependencies": {
+    "archiver": "^8.0.0",
     "cookie-parser": "^1.4.7",
     "express": "^5.3.0",
     "multer": "^2.5.0",
+    "node-cron": "^4.6.0",
     "sharp": "^0.35.5"
   }
 }

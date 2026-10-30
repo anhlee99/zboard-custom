@@ -11,17 +11,45 @@ function placeCaretAtEnd(el) {
   s.addRange(range);
 }
 
+// Wrap #tags in text nodes (outside links) with clickable chips. Display only, never saved.
+const TAG_RE = /(^|[^\p{L}\p{N}_&#/])#([\p{L}\p{N}_-]{1,50})/gu;
+function decorateTags(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) if (walker.currentNode.nodeValue.includes('#') && !walker.currentNode.parentElement.closest('a')) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const text = node.nodeValue;
+    TAG_RE.lastIndex = 0;
+    if (!TAG_RE.test(text)) continue;
+    TAG_RE.lastIndex = 0; // matchAll starts from lastIndex
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    for (const m of text.matchAll(TAG_RE)) {
+      const start = m.index + m[1].length;
+      frag.append(text.slice(last, start));
+      const chip = document.createElement('span');
+      chip.className = 'tag-chip';
+      chip.dataset.tag = m[2].toLowerCase();
+      chip.textContent = '#' + m[2];
+      frag.append(chip);
+      last = start + 1 + m[2].length;
+    }
+    frag.append(text.slice(last));
+    node.replaceWith(frag);
+  }
+}
+
 function NoteBody({ card, editing, actions }) {
   const ref = useRef(null);
   const html = card.data.html || '';
   useLayoutEffect(() => {
     const el = ref.current;
+    el.innerHTML = sanitize(html);
     if (editing) {
-      el.innerHTML = sanitize(html);
       el.focus();
       placeCaretAtEnd(el);
-    } else if (el.innerHTML !== sanitize(html)) {
-      el.innerHTML = sanitize(html);
+    } else {
+      decorateTags(el);
     }
   }, [html, editing]);
   return (

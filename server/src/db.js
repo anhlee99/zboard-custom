@@ -71,7 +71,70 @@ CREATE TABLE IF NOT EXISTS files (
   display_ext TEXT,
   created_at INTEGER NOT NULL
 );
+CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
+  ref UNINDEXED,
+  board_id UNINDEXED,
+  kind UNINDEXED,
+  text,
+  tokenize = 'unicode61 remove_diacritics 2'
+);
+CREATE TABLE IF NOT EXISTS card_tags (
+  card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+  board_id TEXT NOT NULL,
+  tag TEXT NOT NULL,
+  PRIMARY KEY (card_id, tag)
+);
+CREATE INDEX IF NOT EXISTS card_tags_tag ON card_tags(tag);
+CREATE TABLE IF NOT EXISTS drive_files (
+  local_id TEXT PRIMARY KEY,
+  drive_id TEXT NOT NULL,
+  uploaded_at INTEGER NOT NULL
+);
 `;
+const SEARCH_VERSION = '1';
+
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+const decodeEntities = (s) =>
+  s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) =>
+    e[0] === '#' ? String.fromCodePoint(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : ENTITIES[e.toLowerCase()] ?? m
+  );
+const stripHtml = (html) =>
+  decodeEntities(String(html || '').replace(/<(br|\/div|\/p|\/li|\/h\d)[^>]*>/gi, '\n').replace(/<[^>]+>/g, ' '))
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s*\n\s*/g, '\n')
+    .trim();
+
+// Searchable text of a card. Board cards are found through their board's title.
+export function cardText(c) {
+  const d = c.data || {};
+  switch (c.type) {
+    case 'note':
+      return stripHtml(d.html);
+    case 'todo':
+      return [d.title, ...(d.items || []).map((i) => i.text)].filter(Boolean).join('\n');
+    case 'image':
+      return d.caption || '';
+    case 'link':
+      return [d.title, d.description, d.url].filter(Boolean).join('\n');
+    case 'column':
+      return d.title || '';
+    default:
+      return '';
+  }
+}
+
+const TAG_RE = /(?:^|[^\p{L}\p{N}_&#/])#([\p{L}\p{N}_-]{1,50})/gu;
+export function tagsOf(c) {
+  if (!['note', 'todo', 'image'].includes(c.type)) return [];
+  return [...new Set([...cardText(c).matchAll(TAG_RE)].map((m) => m[1].toLowerCase()))];
+}
+
+// Each word becomes a prefix match; all words must match.
+const ftsQuery = (q) =>
+  (String(q).match(/[\p{L}\p{N}_]+/gu) || [])
+    .slice(0, 12)
+    .map((t) => `"${t}"*`)
+    .join(' ');
 
 const CARD_COLS = ['id', 'board_id', 'type', 'x', 'y', 'w', 'h', 'z', 'color', 'column_id', 'sort', 'data', 'created_at', 'updated_at'];
 const BOARD_COLS = ['id', 'parent_id', 'title', 'color', 'data', 'created_at', 'updated_at'];
@@ -167,6 +230,74 @@ export function createStore(file) {
     return out;
   }
 
+  // ---- search index (search_fts + card_tags), refreshed on every write ----
+  function indexCard(id) {
+    db.prepare("DELETE FROM search_fts WHERE kind = 'card' AND ref = ?").run(id);
+    db.prepare('DELETE FROM card_tags WHERE card_id = ?').run(id);
+    const c = getCard(id);
+    if (!c) return;
+    const text = cardText(c);
+    if (text) db.prepare("INSERT INTO search_fts (ref, board_id, kind, text) VALUES (?, ?, 'card', ?)").run(id, c.board_id, text);
+    for (const tag of tagsOf(c)) db.prepare('INSERT OR IGNORE INTO card_tags (card_id, board_id, tag) VALUES (?, ?, ?)').run(id, c.board_id, tag);
+  }
+  function indexBoard(id) {
+    db.prepare("DELETE FROM search_fts WHERE kind = 'board' AND ref = ?").run(id);
+    const b = getBoard(id);
+    if (b?.title) db.prepare("INSERT INTO search_fts (ref, board_id, kind, text) VALUES (?, ?, 'board', ?)").run(id, b.id, b.title);
+  }
+  const unindex = (kind, ids) => {
+    for (const id of ids) db.prepare('DELETE FROM search_fts WHERE kind = ? AND ref = ?').run(kind, id);
+  };
+
+  if (getMeta('search_version') !== SEARCH_VERSION) {
+    db.transaction(() => {
+      db.exec('DELETE FROM search_fts; DELETE FROM card_tags;');
+      for (const { id } of db.prepare('SELECT id FROM boards').all()) indexBoard(id);
+      for (const { id } of db.prepare('SELECT id FROM cards').all()) indexCard(id);
+      setMeta('search_version', SEARCH_VERSION);
+    })();
+  }
+
+  const boardTitle = (id) => getBoard(id)?.title ?? null;
+  function cardHit(id, snippet) {
+    const c = getCard(id);
+    if (!c) return null;
+    return { kind: 'card', id: c.id, type: c.type, board_id: c.board_id, board_title: boardTitle(c.board_id), snippet: snippet ?? cardText(c).slice(0, 160) };
+  }
+
+  // Snippets mark matches with \u0001 … \u0002 so the client can highlight without HTML.
+  function search(q) {
+    const match = ftsQuery(q);
+    if (!match) return [];
+    const rows = db
+      .prepare(
+        "SELECT ref, board_id, kind, snippet(search_fts, 3, char(1), char(2), '…', 14) AS snippet FROM search_fts WHERE search_fts MATCH ? ORDER BY bm25(search_fts) LIMIT 60"
+      )
+      .all(match);
+    return rows
+      .map((r) => {
+        if (r.kind === 'card') return cardHit(r.ref, r.snippet);
+        const b = getBoard(r.ref);
+        return b && { kind: 'board', id: b.id, type: 'board', board_id: b.id, board_title: b.parent_id ? boardTitle(b.parent_id) : null, snippet: r.snippet };
+      })
+      .filter(Boolean);
+  }
+
+  const byTag = (tag) =>
+    db
+      .prepare('SELECT card_id FROM card_tags WHERE tag = ? ORDER BY rowid DESC LIMIT 200')
+      .all(String(tag).replace(/^#/, '').toLowerCase())
+      .map((r) => cardHit(r.card_id))
+      .filter(Boolean);
+
+  const listTags = () => db.prepare('SELECT tag, COUNT(*) AS count FROM card_tags GROUP BY tag ORDER BY count DESC, tag LIMIT 300').all();
+
+  function stats() {
+    const count = (t) => db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n;
+    const stored = db.prepare('SELECT COALESCE(SUM(size), 0) AS n FROM (SELECT MAX(size) AS size FROM files GROUP BY COALESCE(sha256, id))').get().n;
+    return { boards: count('boards'), cards: count('cards'), arrows: count('arrows'), files: count('files'), stored_bytes: stored };
+  }
+
   // ---- boards ----
   function createBoard(parentId, title) {
     const id = newId();
@@ -174,6 +305,7 @@ export function createStore(file) {
     db.prepare(insertSql('boards', BOARD_COLS)).run(
       pack({ id, parent_id: parentId, title: str(title, 500) ?? 'New board', color: null, data: {}, created_at: t, updated_at: t })
     );
+    indexBoard(id);
     return id;
   }
 
@@ -188,6 +320,7 @@ export function createStore(file) {
     next.updated_at = now();
     const sets = Object.keys(next).map((k) => `${k} = :${k}`).join(', ');
     db.prepare(`UPDATE boards SET ${sets} WHERE id = :id`).run({ ...next, id });
+    indexBoard(id);
     return getBoard(id);
   }
 
@@ -198,6 +331,7 @@ export function createStore(file) {
     const id = newId();
     const t = now();
     db.prepare(insertSql('boards', BOARD_COLS)).run(pack({ ...src, id, parent_id: parentId, created_at: t, updated_at: t }));
+    indexBoard(id);
     const cards = cardsOf(srcId);
     const map = new Map(cards.map((c) => [c.id, newId()]));
     for (const c of cards) {
@@ -206,6 +340,7 @@ export function createStore(file) {
       db.prepare(insertSql('cards', CARD_COLS)).run(
         pack({ ...c, id: map.get(c.id), board_id: id, column_id: c.column_id ? map.get(c.column_id) ?? null : null, data, created_at: t, updated_at: t })
       );
+      indexCard(map.get(c.id));
     }
     for (const a of arrowsOf(srcId)) {
       if (!map.has(a.from_card) || !map.has(a.to_card)) continue;
@@ -257,6 +392,7 @@ export function createStore(file) {
         updated_at: t,
       })
     );
+    indexCard(id);
     return decorate(getCard(id));
   }
 
@@ -307,6 +443,7 @@ export function createStore(file) {
       db.prepare(`UPDATE cards SET ${sets} WHERE id = :id`).run({ ...next, id: card.id });
     }
     for (const [id, card] of moved) if (!before.has(id)) before.set(id, card);
+    for (const id of before.keys()) indexCard(id);
 
     // A card can only sit in a column on its own board.
     for (const id of before.keys()) {
@@ -368,6 +505,8 @@ export function createStore(file) {
     snapshot.arrows = [...arrows.values()];
     const removed = [...cards.values()].map((c) => ({ id: c.id, board_id: c.board_id }));
     const removedArrows = snapshot.arrows.filter((a) => !boardIds.includes(a.board_id)).map((a) => ({ id: a.id, board_id: a.board_id }));
+    unindex('card', snapshot.cards.map((c) => c.id));
+    unindex('board', boardIds);
     for (const b of roots) db.prepare('DELETE FROM boards WHERE id = ?').run(b);
     for (const id of cards.keys()) db.prepare('DELETE FROM cards WHERE id = ?').run(id);
     return { snapshot, removed, removedArrows };
@@ -405,6 +544,8 @@ export function createStore(file) {
       db.prepare(insertSql('arrows', ARROW_COLS)).run(pack(a));
       arrows.push(a.id);
     }
+    for (const id of restoredBoards) indexBoard(id);
+    for (const id of cards) indexCard(id);
     return {
       boards: restoredBoards,
       cards: cards.map(getCard).map(decorate),
@@ -450,6 +591,15 @@ export function createStore(file) {
     return arrow;
   }
 
+  // A board with everything nested under it, plus the files its cards use.
+  function exportTree(boardId) {
+    if (!getBoard(boardId)) throw new HttpError(404, 'Board not found');
+    const ids = subtreeIds(boardId);
+    const cards = ids.flatMap(cardsOf);
+    const fileIds = cards.flatMap((c) => [c.data.fileId, c.data.image]).filter(Boolean);
+    return { boards: ids.map(getBoard), cards, arrows: ids.flatMap(arrowsOf), files: Object.values(filesByIds(fileIds)) };
+  }
+
   // ---- files ----
   const insertFile = (f) =>
     db.prepare(insertSql('files', ['id', 'name', 'mime', 'ext', 'size', 'width', 'height', 'sha256', 'display_ext', 'created_at'])).run(f);
@@ -474,6 +624,16 @@ export function createStore(file) {
     deleteArrow,
     insertFile,
     getFile,
+    exportTree,
+    allFiles: () => db.prepare('SELECT * FROM files').all(),
+    filesNotOnDrive: () => db.prepare('SELECT f.* FROM files f LEFT JOIN drive_files d ON d.local_id = f.id WHERE d.local_id IS NULL').all(),
+    markOnDrive: (localId, driveId) =>
+      db.prepare('INSERT OR REPLACE INTO drive_files (local_id, drive_id, uploaded_at) VALUES (?, ?, ?)').run(localId, driveId, Date.now()),
+    clearDriveFiles: () => db.exec('DELETE FROM drive_files'),
+    search,
+    byTag,
+    listTags,
+    stats,
     close: () => db.close(),
   };
 }

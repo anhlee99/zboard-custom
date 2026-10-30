@@ -140,8 +140,17 @@ export default function Board({ boardId, focus, onInfo }) {
           });
       },
       resync: load,
+      reload: () => location.reload(), // the server swapped its database (Drive restore)
     });
   }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A search result on this same board only changes ?focus=.
+  useEffect(() => {
+    if (focus) {
+      pendingFocus.current = focus;
+      setRectsVersion((v) => v + 1);
+    }
+  }, [focus]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -646,6 +655,10 @@ export default function Board({ boardId, focus, onInfo }) {
         else g = { type: 'arrow', from: id };
       } else if (t.closest('input, textarea, select, button, a, [contenteditable="true"], .float-bar, .format-bar')) {
         return;
+      } else if (t.closest('.tag-chip')) {
+        e.preventDefault(); // keep focus in the search box that is about to open
+        window.dispatchEvent(new CustomEvent('zb:search', { detail: { tag: t.closest('.tag-chip').dataset.tag } }));
+        return;
       } else if (t.closest('[data-arrow-id]')) {
         setSelArrow(t.closest('[data-arrow-id]').dataset.arrowId);
         setSel(EMPTY);
@@ -834,6 +847,11 @@ export default function Board({ boardId, focus, onInfo }) {
     if (!t.closest('.add-menu')) setAddMenu(null);
     if (t.closest('input, textarea, select, button, a, [contenteditable="true"], .float-bar, .format-bar, .add-menu')) {
       touchG.current = null;
+      return;
+    }
+    if (t.closest('.tag-chip')) {
+      touchG.current = null;
+      window.dispatchEvent(new CustomEvent('zb:search', { detail: { tag: t.closest('.tag-chip').dataset.tag } }));
       return;
     }
     const base = { id: e.pointerId, sx: e.clientX, sy: e.clientY };

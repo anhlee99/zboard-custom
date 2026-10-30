@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { api, setUnauthorizedHandler } from './api.js';
 import Board from './Board.jsx';
 import { Icon } from './icons.jsx';
+import Menu from './Menu.jsx';
+import Search from './Search.jsx';
 
 // #/b/<board id>?focus=<card id>
 function parseHash() {
@@ -45,6 +47,24 @@ export default function App() {
   const [auth, setAuth] = useState('checking');
   const [route, setRoute] = useState(parseHash);
   const [info, setInfo] = useState({ board: null, breadcrumbs: [] });
+  const [search, setSearch] = useState(null);
+  const [menu, setMenu] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearch((s) => (s ? null : {}));
+      }
+    };
+    const onTag = (e) => setSearch({ tag: e.detail.tag });
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('zb:search', onTag);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('zb:search', onTag);
+    };
+  }, []);
 
   useEffect(() => {
     setUnauthorizedHandler(() => setAuth('out'));
@@ -86,12 +106,19 @@ export default function App() {
           ))}
         </nav>
         <div className="topbar-right">
-          <button className="icon-btn" onClick={logout} data-tip="Log out" aria-label="Log out">
-            <Icon name="logout" />
+          <button className="search-btn" onClick={() => setSearch({})} data-tip="Search (Ctrl+K)" aria-label="Search">
+            <Icon name="search" size={18} />
+            <span>Search</span>
+            <kbd>Ctrl K</kbd>
+          </button>
+          <button className="icon-btn" onClick={() => setMenu(true)} data-tip="Menu" aria-label="Menu">
+            <Icon name="menu" />
           </button>
         </div>
       </header>
       <Board key={route.board} boardId={route.board} focus={route.focus} onInfo={setInfo} />
+      {search && <Search initial={search} onClose={() => setSearch(null)} />}
+      {menu && <Menu boardId={route.board} boardTitle={info.board?.title} onClose={() => setMenu(false)} onLogout={logout} />}
     </div>
   );
 }

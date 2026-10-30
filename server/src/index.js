@@ -7,11 +7,17 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import sharp from 'sharp';
+import cron from 'node-cron';
+import { ZipArchive } from 'archiver';
 import { createStore, HttpError, isId, newId } from './db.js';
+import { createDrive, createLocalBackups } from './backup.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(ROOT, process.env.DATA_DIR || 'data');
+const BACKUP_DIR = path.resolve(ROOT, process.env.BACKUP_DIR || 'backup');
+const BACKUP_CRON = (process.env.BACKUP_CRON ?? '0 3 * * *').trim();
+const BACKUP_KEEP = Number(process.env.BACKUP_KEEP) || 14;
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 50;
 const APP_PASSWORD = process.env.APP_PASSWORD;
 
@@ -24,7 +30,8 @@ const DIRS = Object.fromEntries(['files', 'thumbs', 'minis', 'tmp'].map((d) => [
 for (const dir of Object.values(DIRS)) fs.mkdirSync(dir, { recursive: true });
 for (const f of fs.readdirSync(DIRS.tmp)) fs.rmSync(path.join(DIRS.tmp, f), { force: true });
 
-const store = createStore(path.join(DATA_DIR, 'zboard.db'));
+const DB_FILE = path.join(DATA_DIR, 'zboard.db');
+let store = createStore(DB_FILE); // replaced by a Google Drive restore
 
 // ---- secrets ----
 const secret = (key) => {
@@ -97,6 +104,17 @@ app.post('/api/login', async (req, res) => {
 app.use(['/api', '/files'], (req, res, next) => {
   if (authed(req)) return next();
   res.status(401).json({ error: 'Not logged in' });
+});
+
+// Successful writes mark the data dirty for the Google Drive backup (uploaded once edits stop).
+const NOT_DATA = /^\/(logout|token|backup|drive|link-preview)/;
+app.use('/api', (req, res, next) => {
+  if (req.method !== 'GET' && !NOT_DATA.test(req.path)) {
+    res.on('finish', () => {
+      if (res.statusCode < 400) drive.markDirty();
+    });
+  }
+  next();
 });
 
 app.post('/api/logout', (req, res) => {
@@ -220,6 +238,27 @@ const miniPath = (id) => path.join(DIRS.minis, id + '.webp');
 const originalPath = (f) => path.join(DIRS.files, f.id + f.ext);
 const displayPath = (f) => path.join(DIRS.files, f.id + (f.display_ext || f.ext));
 
+const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'];
+
+// Display copy (HEIC only) and the upright 800 px thumbnail. Originals are never touched.
+async function makeDerivatives(row, isHeic) {
+  const out = {};
+  let src = originalPath(row);
+  if (isHeic) {
+    // Browsers can't show HEIC; keep the original and add a JPEG copy for display.
+    src = path.join(DIRS.files, row.id + '.jpg');
+    await sharp(originalPath(row)).rotate().jpeg({ quality: 90 }).toFile(src);
+    out.display_ext = '.jpg';
+    out.mime = 'image/heic';
+  }
+  const meta = await sharp(src).metadata();
+  const turned = (meta.orientation ?? 1) >= 5;
+  out.width = turned ? meta.height : meta.width;
+  out.height = turned ? meta.width : meta.height;
+  await sharp(src).rotate().resize(800, 800, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 80 }).toFile(thumbPath(row.id));
+  return out;
+}
+
 // f: { path, originalname, mimetype, size }; the temp file at f.path is moved into files/.
 async function storeUpload(f, { utf8Name = false } = {}) {
   const id = newId();
@@ -231,22 +270,10 @@ async function storeUpload(f, { utf8Name = false } = {}) {
   const row = { id, name, mime: f.mimetype, ext, size: f.size, width: null, height: null, sha256: hash, display_ext: null, created_at: Date.now() };
 
   const isHeic = /^\.(heic|heif)$/.test(ext) || /heic|heif/.test(f.mimetype);
-  const isImage = isHeic || f.mimetype.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'].includes(ext);
+  const isImage = isHeic || f.mimetype.startsWith('image/') || IMAGE_EXTS.includes(ext);
   if (isImage) {
     try {
-      let src = dest;
-      if (isHeic) {
-        // Browsers can't show HEIC; keep the original and add a JPEG copy for display.
-        src = path.join(DIRS.files, id + '.jpg');
-        await sharp(dest).rotate().jpeg({ quality: 90 }).toFile(src);
-        row.display_ext = '.jpg';
-        row.mime = 'image/heic';
-      }
-      const meta = await sharp(src).metadata();
-      const turned = (meta.orientation ?? 1) >= 5;
-      row.width = turned ? meta.height : meta.width;
-      row.height = turned ? meta.width : meta.height;
-      await sharp(src).rotate().resize(800, 800, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 80 }).toFile(thumbPath(id));
+      Object.assign(row, await makeDerivatives(row, isHeic));
     } catch (e) {
       for (const p of [dest, path.join(DIRS.files, id + '.jpg'), thumbPath(id)]) fs.rmSync(p, { force: true });
       if (isHeic) {
@@ -419,6 +446,109 @@ app.get('/files/:id/mini', async (req, res) => {
   }
   res.sendFile(out, { headers: IMMUTABLE });
 });
+
+// ---- search and tags ----
+app.get('/api/search', (req, res) => {
+  if (req.query.tag) return res.json({ results: store.byTag(String(req.query.tag)) });
+  res.json({ results: store.search(String(req.query.q || '')) });
+});
+app.get('/api/tags', (req, res) => res.json({ tags: store.listTags() }));
+
+// ---- stats, backups, export ----
+const dirSize = (dir) => {
+  if (!fs.existsSync(dir)) return 0;
+  let n = 0;
+  for (const f of fs.readdirSync(dir, { withFileTypes: true })) if (f.isFile()) n += fs.statSync(path.join(dir, f.name)).size;
+  return n;
+};
+app.get('/api/stats', (req, res) => {
+  const dbBytes = ['', '-wal'].reduce((n, s) => n + (fs.existsSync(DB_FILE + s) ? fs.statSync(DB_FILE + s).size : 0), 0);
+  res.json({ ...store.stats(), db_bytes: dbBytes, thumbs_bytes: dirSize(DIRS.thumbs) + dirSize(DIRS.minis), data_dir: DATA_DIR });
+});
+
+const log = (msg) => console.log(`[${new Date().toISOString()}] ${msg}`);
+const local = createLocalBackups({ getStore: () => store, dataDir: DATA_DIR, backupDir: BACKUP_DIR, keep: BACKUP_KEEP, log });
+
+app.get('/api/backup', (req, res) =>
+  res.json({ status: local.status(), dir: BACKUP_DIR, cron: BACKUP_CRON, keep: BACKUP_KEEP, snapshots: local.list().slice(0, BACKUP_KEEP) })
+);
+app.post('/api/backup', async (req, res) => res.json({ status: await local.run() }));
+
+const slug = (s) =>
+  String(s || '')
+    .normalize('NFKD')
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .slice(0, 60);
+
+app.get('/api/export/:boardId', (req, res) => {
+  const tree = store.exportTree(req.params.boardId);
+  const root = tree.boards[0];
+  res.attachment(`zboard-${slug(root.title) || 'board'}-${new Date().toISOString().slice(0, 10)}.zip`);
+  const zip = new ZipArchive({ zlib: { level: 6 } });
+  zip.on('warning', (e) => log('export warning: ' + e.message));
+  zip.on('error', (e) => {
+    log('export failed: ' + e.message);
+    res.destroy(e);
+  });
+  zip.pipe(res);
+  const doc = { format: 'zboard-export', version: 1, exported_at: new Date().toISOString(), root: root.id, ...tree };
+  zip.append(JSON.stringify(doc, null, 2), { name: 'board.json' });
+  for (const f of tree.files) {
+    if (fs.existsSync(originalPath(f))) zip.file(originalPath(f), { name: `files/${f.id}${f.ext}` });
+  }
+  zip.finalize();
+});
+
+// ---- Google Drive ----
+const KEEP_ON_RESTORE = ['session_secret', 'api_token', 'drive_refresh_token', 'drive_folders', 'drive_salt', 'drive_state'];
+
+// Swap in a restored database, keeping this server's secrets and Drive connection.
+async function replaceDatabase(tmp) {
+  const incoming = createStore(tmp);
+  for (const k of KEEP_ON_RESTORE) incoming.setMeta(k, store.getMeta(k) ?? '');
+  incoming.close();
+  store.close();
+  for (const s of ['-wal', '-shm']) fs.rmSync(DB_FILE + s, { force: true });
+  fs.renameSync(tmp, DB_FILE);
+  for (const s of ['-wal', '-shm']) fs.rmSync(tmp + s, { force: true });
+  store = createStore(DB_FILE);
+  for (const f of store.allFiles()) {
+    const image = IMAGE_EXTS.includes(f.ext) || f.display_ext;
+    if (!image || fs.existsSync(thumbPath(f.id)) || !fs.existsSync(originalPath(f))) continue;
+    await makeDerivatives(f, Boolean(f.display_ext)).catch((e) => log(`thumbnail for ${f.id} failed: ${e.message}`));
+  }
+  for (const [board] of streams) emit(board, 'reload', {}, null);
+}
+
+const drive = createDrive({
+  getStore: () => store,
+  dataDir: DATA_DIR,
+  clientId: process.env.GOOGLE_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  passphrase: process.env.GOOGLE_BACKUP_PASSPHRASE || '',
+  debounceMs: Number(process.env.DRIVE_DEBOUNCE_MS) || 90_000,
+  log,
+  onRestore: replaceDatabase,
+});
+
+app.get('/api/drive', (req, res) => res.json(drive.status()));
+app.post('/api/drive/connect', async (req, res) => res.json({ pending: await drive.connect() }));
+app.post('/api/drive/disconnect', async (req, res) => res.json(await drive.disconnect()));
+app.post('/api/drive/sync', async (req, res) => res.json(await drive.sync('manual')));
+app.post('/api/drive/restore', async (req, res) => res.json(await drive.restore()));
+
+if (BACKUP_CRON && BACKUP_CRON !== 'off') {
+  if (!cron.validate(BACKUP_CRON)) {
+    console.error(`BACKUP_CRON "${BACKUP_CRON}" is not a valid cron expression (use "off" to disable).`);
+    process.exit(1);
+  }
+  cron.schedule(BACKUP_CRON, async () => {
+    await local.run().catch(() => {});
+    if (drive.status().connected) await drive.sync('nightly').catch(() => {});
+  });
+}
 
 // ---- events ----
 app.get('/api/events', (req, res) => {
