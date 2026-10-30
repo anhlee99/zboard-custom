@@ -2365,3 +2365,12 @@ kbd {
     padding: 10px;
   }
 }
+
+/* Far-out snapshot (FarSnapshot.jsx): one picture of the board; the real cards stay for clicks. */
+.far-snapshot {
+  position: absolute;
+  pointer-events: none;
+}
+.world.snap > .card:not(.selected):not(.dragging):not(.editing) {
+  opacity: 0;
+}

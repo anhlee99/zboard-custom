@@ -4,6 +4,7 @@ import { CardView, youtubeId } from './Cards.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import CoverPicker from './Cover.jsx';
 import ImageEditor from './ImageEditor.jsx';
+import FarSnapshot from './FarSnapshot.jsx';
 import LabelPicker from './Labels.jsx';
 import DrawLayer from './Draw.jsx';
 import { inkBounds, mapStrokes } from './ink.js';
@@ -297,20 +298,31 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   // frame. Building that layer takes 150-250 ms, so it is kept rather than made per pan. A kept
   // layer stays drawn at the zoom it was made at, so once a zoom has settled, drop and re-add it
   // for a frame to have it redrawn sharp at the new scale.
-  // settledS is the zoom once it has stopped changing; image sizes follow it, not every step.
+  // That redraw and the image-size swap (settledS) are heavy, so they wait until the view has been
+  // still for a moment with no button held: starting a pan right after a zoom used to land on top
+  // of them and stutter. A zoom that barely changed the scale skips the redraw.
   const [settledS, setSettledS] = useState(view.s);
   const redrawTimer = useRef(0);
+  const drawnAt = useRef(view.s); // the scale the layer was last drawn at
   useEffect(() => {
     const el = worldRef.current;
     if (!el) return;
-    clearTimeout(redrawTimer.current);
-    redrawTimer.current = setTimeout(() => {
-      setSettledS(view.s);
+    const settle = () => {
+      if (gesture.current || touchG.current) {
+        redrawTimer.current = setTimeout(settle, 200);
+        return;
+      }
+      const s = S.current.view.s;
+      setSettledS(s);
+      if (Math.abs(s - drawnAt.current) / drawnAt.current < 0.03) return;
+      drawnAt.current = s;
       el.style.willChange = 'auto';
       requestAnimationFrame(() => requestAnimationFrame(() => (el.style.willChange = '')));
-    }, 300);
+    };
+    clearTimeout(redrawTimer.current);
+    redrawTimer.current = setTimeout(settle, 350);
     return () => clearTimeout(redrawTimer.current);
-  }, [view.s]);
+  }, [view]);
   const [canvasSize, setCanvasSize] = useState({ w: 1200, h: 800 });
   useEffect(() => {
     const el = canvasRef.current;
@@ -1738,6 +1750,9 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   const sizeFor = (s) => (s < 0.2 ? 'micro' : s < 0.45 ? 'mini' : 'thumb');
   const lowRes = sizeFor(settledS);
   const lowResNow = sizeFor(view.s); // for cards that appear mid-zoom: right size straight away
+  // Very far out on a big board, the board is shown as one picture (see FarSnapshot.jsx).
+  const snap = settledS < 0.2 && topCards.length > CULL_AFTER && !drawing;
+  const snapSkip = useMemo(() => new Set([...sel, ...dragIds, editing].filter(Boolean)), [sel, dragIds, editing]);
 
   // Watch card sizes. Keyed on which cards are rendered, not their positions, so a drag
   // does not re-subscribe every card on every mouse move.
@@ -2132,7 +2147,8 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        <div className="world" ref={worldRef} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})` }}>
+        <div className={snap ? 'world snap' : 'world'} ref={worldRef} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})` }}>
+          <FarSnapshot active={snap} scale={settledS} worldRef={worldRef} rects={rects} cards={cards} files={files} skip={snapSkip} version={rectsVersion} />
           {arrowLayer}
           {cardLayer}
         </div>

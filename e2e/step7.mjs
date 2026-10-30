@@ -98,6 +98,21 @@ const far = await framesWhilePanning();
 console.log('  zoomed-out pan:', JSON.stringify(far));
 check(far.fps >= 17 && far.max < 1000, `zoomed out: ${far.fps} fps, longest frame ${far.max} ms (target ≥ 17 fps, no multi-second freeze)`);
 
+// --- far out the board is one picture; the real cards still take clicks ---
+const snapInfo = await page.evaluate(() => ({ snap: document.querySelector('.world').classList.contains('snap'), canvas: !!document.querySelector('.far-snapshot')?.width }));
+check(snapInfo.snap && snapInfo.canvas, 'far out, the board is drawn as one picture', JSON.stringify(snapInfo));
+const hiddenCard = await page.evaluate(() => {
+  for (const el of document.querySelectorAll('.world > .card-image')) {
+    const r = el.getBoundingClientRect();
+    if (r.left > 120 && r.top > 120 && r.right < innerWidth - 120 && r.bottom < innerHeight - 120 && getComputedStyle(el).opacity === '0') return { id: el.dataset.cardId, x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  }
+  return null;
+});
+await page.mouse.click(hiddenCard.x, hiddenCard.y);
+await sleep(300);
+check(await page.evaluate((id) => { const el = document.querySelector(`[data-card-id="${id}"]`); return el.classList.contains('selected') && getComputedStyle(el).opacity === '1'; }, hiddenCard.id), 'clicking the picture selects the real card, which then shows live');
+await page.keyboard.press('Escape');
+
 // --- drag still works on the big board ---
 await page.keyboard.press('0');
 await sleep(800);
