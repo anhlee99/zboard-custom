@@ -249,7 +249,7 @@ function BoardBody({ card, editing, actions }) {
   );
 }
 
-function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropIndex, dragIds }) {
+function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropIndex, dragIds, cutIds }) {
   return (
     <>
       <div className="col-head">
@@ -282,6 +282,7 @@ function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropI
               file={files[k.data.fileId]}
               actions={actions}
               dragging={dragIds.has(k.id)}
+              cut={cutIds?.has(k.id)}
             />
           </Fragment>
         ))}
@@ -295,9 +296,9 @@ function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropI
 const BODIES = { note: NoteBody, todo: TodoBody, image: ImageBody, link: LinkBody, board: BoardBody };
 
 export const CardView = memo(function CardView(props) {
-  const { card, inColumn, selected, editing, dragging } = props;
+  const { card, inColumn, selected, editing, dragging, cut } = props;
   const style = inColumn ? undefined : { left: card.x, top: card.y, width: card.w || DEFAULT_W[card.type], zIndex: card.z };
-  const cls = ['card', `card-${card.type}`, selected && 'selected', editing && 'editing', dragging && 'dragging', card.color && `c-${card.color}`, inColumn && 'in-column']
+  const cls = ['card', `card-${card.type}`, selected && 'selected', editing && 'editing', dragging && 'dragging', cut && 'cut', card.color && `c-${card.color}`, inColumn && 'in-column']
     .filter(Boolean)
     .join(' ');
   const Body = card.type === 'column' ? ColumnBody : BODIES[card.type];

@@ -783,31 +783,156 @@ input {
   max-width: calc(100vw - 32px);
 }
 
-/* ---------- add menu (long-press on empty space) ---------- */
-.add-menu {
-  position: absolute;
-  z-index: 50;
-  min-width: 180px;
+/* ---------- context menu ---------- */
+.ctx-menu {
+  position: fixed;
+  z-index: 250;
+  min-width: 210px;
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
   background: var(--panel);
   border-radius: 10px;
-  box-shadow: var(--shadow-lift);
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
+  box-shadow: var(--shadow-lift), 0 0 0 1px rgba(30, 28, 24, 0.06);
+  padding: 5px;
+  user-select: none;
+  font-size: 13px;
 }
-.add-menu button {
+.ctx-row {
+  position: static;
+}
+.ctx-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  padding: 10px 12px;
+  padding: 7px 10px;
   border-radius: 6px;
+  cursor: default;
+  white-space: nowrap;
 }
-.add-menu button:hover,
-.add-menu button:active {
-  background: var(--bg);
+.ctx-item:hover,
+.ctx-item.open {
+  background: var(--accent-soft);
+}
+.ctx-item.disabled {
+  color: var(--ink-2);
+  opacity: 0.55;
+}
+.ctx-item.danger {
+  color: var(--danger);
+}
+.ctx-icon {
+  width: 16px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink-2);
+}
+.ctx-item.danger .ctx-icon {
+  color: var(--danger);
+}
+.ctx-icon .swatch {
+  width: 14px;
+  height: 14px;
+}
+.ctx-label {
+  flex: 1;
+}
+.ctx-shortcut {
+  color: var(--ink-2);
+  font-size: 11px;
+  margin-left: 18px;
+}
+.ctx-more {
+  color: var(--ink-2);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 0 0 8px;
+}
+.ctx-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 6px;
+}
+@media (pointer: coarse) {
+  .ctx-item {
+    padding: 11px 12px;
+  }
+}
+
+.card.cut {
+  opacity: 0.45;
+}
+
+/* ---------- tooltips (data-tip) ---------- */
+[data-tip] {
+  position: relative;
+}
+/* Elements that are positioned on their own keep their positioning. */
+.handle[data-tip] {
+  position: absolute;
+}
+.logo[data-tip] {
+  position: relative;
+}
+@media (hover: hover) {
+  [data-tip]:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    z-index: 400;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    transform: translateX(-50%);
+    padding: 5px 8px;
+    border-radius: 6px;
+    background: var(--ink);
+    color: #fff;
+    font: 500 12px/1.2 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    white-space: nowrap;
+    pointer-events: none;
+    animation: tip-in 0.12s ease-out 0.35s both;
+  }
+  /* Below: top bar. Right: left toolbar. Right-aligned at the right edge. */
+  .topbar [data-tip]:hover::after {
+    bottom: auto;
+    top: calc(100% + 8px);
+  }
+  .topbar-right [data-tip]:hover::after {
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+  .toolbar [data-tip]:hover::after {
+    left: calc(100% + 8px);
+    bottom: auto;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .zoom-ctl [data-tip]:hover::after {
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+  .card [data-tip]:hover::after {
+    left: calc(100% + 10px);
+    bottom: auto;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}
+@media (hover: hover) and (max-width: 700px) {
+  .toolbar [data-tip]:hover::after {
+    left: 50%;
+    top: auto;
+    bottom: calc(100% + 8px);
+    transform: translateX(-50%);
+  }
+}
+@keyframes tip-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* Long notes scroll inside the editor instead of panning the board. */

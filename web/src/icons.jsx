@@ -29,6 +29,13 @@ const PATHS = {
   dots: 'M5 12h.01 M12 12h.01 M19 12h.01',
   home: 'M3 11l9-7 9 7 M5 10v10h14V10',
   inbox: 'M3 13h5l2 3h4l2-3h5 M5 5h14l2 8v7H3v-7z',
+  paste: 'M9 4h6v3H9z M9 5H6v16h12V5h-3 M9 12h6 M9 16h4',
+  cut: 'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M8.5 7.5L20 19 M8.5 16.5L20 5',
+  duplicate: 'M8 8h12v12H8z M14 11v6 M11 14h6 M16 8V4H4v12h4',
+  back: 'M4 4h12v12H4z M8 20h12V8',
+  edit: 'M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4',
+  select: 'M4 4h4 M12 4h4 M20 4v4 M20 12v4 M20 20h-4 M12 20H8 M4 20v-4 M4 12V8',
+  fit: 'M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5',
 };
 
 export function Icon({ name, size = 20, ...rest }) {

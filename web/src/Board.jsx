@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, openEvents, uploadFiles } from './api.js';
 import { CardView } from './Cards.jsx';
+import ContextMenu from './ContextMenu.jsx';
 import { Icon } from './icons.jsx';
 import { COLORS, DEFAULT_W, byId, clamp, htmlText, isImageFile, isUrl, sortBetween, textToHtml, uid } from './util.js';
 
@@ -8,6 +9,19 @@ const MIN_S = 0.1;
 const MAX_S = 4;
 const GRID = 24;
 const EMPTY = new Set();
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+// Copied cards live in localStorage (shared by every tab) and, as application/x-zboard, on the system clipboard.
+const CLIP_KEY = 'zb:clipboard';
+const CLIP_TYPE = 'application/x-zboard';
+function readClip() {
+  try {
+    const c = JSON.parse(localStorage.getItem(CLIP_KEY));
+    return c?.zboard ? c : null;
+  } catch {
+    return null;
+  }
+}
 
 function loadView(id) {
   try {
@@ -54,7 +68,12 @@ export default function Board({ boardId, focus, onInfo }) {
   const [lightbox, setLightbox] = useState(null);
   const [toast, setToast] = useState(null);
   const [colorOpen, setColorOpen] = useState(false);
-  const [addMenu, setAddMenu] = useState(null);
+  const [ctx, setCtx] = useState(null); // open context menu: { x, y, ids, at }
+  const [boardList, setBoardList] = useState([]);
+  const [cutIds, setCutIds] = useState(() => {
+    const clip = readClip();
+    return clip?.cut && clip.board === boardId ? new Set(clip.cards.map((c) => c.id)) : EMPTY;
+  });
   const [rectsVersion, setRectsVersion] = useState(0);
 
   const S = useRef({});
@@ -557,9 +576,12 @@ export default function Board({ boardId, focus, onInfo }) {
     setEditing(id);
   }, []);
 
-  const duplicate = useCallback(() => {
+  // These act on the selection, or on the cards a context menu was opened for.
+  const pick = (only) => (Array.isArray(only) ? only : [...S.current.sel]);
+
+  const duplicate = useCallback((only) => {
     const cs = S.current.cards;
-    const picked = [...S.current.sel].map((id) => cs[id]).filter(Boolean);
+    const picked = pick(only).map((id) => cs[id]).filter(Boolean);
     if (!picked.length) return;
     const list = [];
     for (const c of picked) {
@@ -580,9 +602,9 @@ export default function Board({ boardId, focus, onInfo }) {
   }, [createCards]);
 
   const setColor = useCallback(
-    (color) => {
+    (color, only) => {
       const cs = S.current.cards;
-      const ids = [...S.current.sel].filter((id) => cs[id]);
+      const ids = pick(only).filter((id) => cs[id]);
       const before = ids.map((id) => ({ id, color: cs[id].color ?? null }));
       patchCards(ids.map((id) => ({ id, color })), () => patchCards(before));
       setColorOpen(false);
@@ -590,13 +612,258 @@ export default function Board({ boardId, focus, onInfo }) {
     [patchCards]
   );
 
-  const bringToFront = useCallback(() => {
+  const bringToFront = useCallback((only) => {
     const cs = S.current.cards;
     let z = topZ();
-    const ids = [...S.current.sel].filter((id) => cs[id] && !cs[id].column_id).sort((a, b) => cs[a].z - cs[b].z);
+    const ids = pick(only).filter((id) => cs[id] && !cs[id].column_id).sort((a, b) => cs[a].z - cs[b].z);
     const before = ids.map((id) => ({ id, z: cs[id].z }));
     patchCards(ids.map((id) => ({ id, z: ++z })), () => patchCards(before));
   }, [patchCards]);
+
+  const sendToBack = useCallback((only) => {
+    const cs = S.current.cards;
+    let z = Math.min(0, ...Object.values(cs).map((c) => c.z || 0));
+    const ids = pick(only).filter((id) => cs[id] && !cs[id].column_id).sort((a, b) => cs[b].z - cs[a].z);
+    const before = ids.map((id) => ({ id, z: cs[id].z }));
+    patchCards(ids.map((id) => ({ id, z: --z })), () => patchCards(before));
+  }, [patchCards]);
+
+  const selectAll = useCallback(() => {
+    const cs = S.current.cards;
+    setSel(new Set(Object.values(cs).filter((c) => !c.column_id || !cs[c.column_id]).map((c) => c.id)));
+  }, []);
+
+  const fitAll = useCallback(() => {
+    const cs = S.current.cards;
+    const rs = Object.values(cs)
+      .filter((c) => !c.column_id || !cs[c.column_id])
+      .map((c) => rects.current.get(c.id))
+      .filter(Boolean);
+    if (!rs.length) return;
+    const x1 = Math.min(...rs.map((r) => r.x));
+    const y1 = Math.min(...rs.map((r) => r.y));
+    const x2 = Math.max(...rs.map((r) => r.x + r.w));
+    const y2 = Math.max(...rs.map((r) => r.y + r.h));
+    const el = canvasRef.current;
+    const pad = 60;
+    const s = clamp(Math.min((el.clientWidth - pad * 2) / (x2 - x1 || 1), (el.clientHeight - pad * 2) / (y2 - y1 || 1)), MIN_S, 1);
+    setView({ s, x: (el.clientWidth - (x2 - x1) * s) / 2 - x1 * s, y: (el.clientHeight - (y2 - y1) * s) / 2 - y1 * s });
+  }, []);
+
+  const moveToBoard = useCallback(
+    (ids, target) => {
+      const cs = S.current.cards;
+      const top = ids.filter((id) => cs[id] && !(cs[id].column_id && ids.includes(cs[id].column_id)));
+      const back = top.map((id) => ({ id, board_id: boardId, x: cs[id].x, y: cs[id].y, column_id: cs[id].column_id ?? null, sort: cs[id].sort }));
+      patchCards(top.map((id, i) => ({ id, board_id: target, column_id: null, x: 40 + i * 24, y: 40 + i * 24 })), () => patchCards(back));
+      notify(`Moved ${top.length} card${top.length > 1 ? 's' : ''}`);
+    },
+    [boardId, patchCards, notify]
+  );
+
+  // ---------- clipboard ----------
+  const copySelection = useCallback(
+    (cut = false, only = null) => {
+      const cs = S.current.cards;
+      const ids = new Set([...(only || S.current.sel)].filter((id) => cs[id]));
+      if (!ids.size) return null;
+      for (const c of Object.values(cs)) if (c.column_id && ids.has(c.column_id)) ids.add(c.id);
+      const cards = [...ids].map((id) => cs[id]);
+      const plain = (c) => {
+        const d = c.data || {};
+        if (c.type === 'note') return htmlText(d.html);
+        if (c.type === 'todo') return [d.title, ...(d.items || []).map((i) => `${i.done ? '[x]' : '[ ]'} ${i.text}`)].filter(Boolean).join('\n');
+        if (c.type === 'link') return d.url || '';
+        if (c.type === 'board') return c.child?.title || '';
+        return d.caption || d.title || '';
+      };
+      const clip = {
+        zboard: 1,
+        cut,
+        board: boardId,
+        at: Date.now(),
+        cards: cards.map(({ child, ...c }) => c),
+        arrows: Object.values(S.current.arrows).filter((a) => ids.has(a.from_card) && ids.has(a.to_card)),
+        text: cards.map(plain).filter(Boolean).join('\n\n'),
+      };
+      try {
+        localStorage.setItem(CLIP_KEY, JSON.stringify(clip));
+      } catch {}
+      setCutIds(cut ? ids : EMPTY);
+      const top = cards.filter((c) => !c.column_id || !ids.has(c.column_id)).length;
+      notify(`${cut ? 'Cut' : 'Copied'} ${top} card${top > 1 ? 's' : ''}`);
+      return clip;
+    },
+    [boardId, notify]
+  );
+
+  // The menu has no clipboard event to write into, so use the async API (custom types need the "web " prefix).
+  const toSystemClipboard = (clip) => {
+    const text = clip.text || ' ';
+    try {
+      const item = new ClipboardItem({
+        'text/plain': new Blob([text], { type: 'text/plain' }),
+        ['web ' + CLIP_TYPE]: new Blob([JSON.stringify(clip)], { type: 'web ' + CLIP_TYPE }),
+      });
+      navigator.clipboard.write([item]).catch(() => navigator.clipboard.writeText(text).catch(() => {}));
+    } catch {
+      navigator.clipboard?.writeText(text).catch(() => {});
+    }
+  };
+
+  // Paste copied cards with their top-left corner at `at`. A cut moves the originals instead.
+  const pasteClip = useCallback(
+    async (clip, at) => {
+      const inClip = new Set(clip.cards.map((c) => c.id));
+      const top = clip.cards.filter((c) => !c.column_id || !inClip.has(c.column_id));
+      if (!top.length) return;
+      const minX = Math.min(...top.map((c) => c.x));
+      const minY = Math.min(...top.map((c) => c.y));
+      const place = (c) => ({ x: Math.round(at.x + c.x - minX), y: Math.round(at.y + c.y - minY) });
+      if (clip.cut) {
+        try {
+          localStorage.removeItem(CLIP_KEY);
+        } catch {}
+        setCutIds(EMPTY);
+        const back = top.map((c) => ({ id: c.id, board_id: clip.board, x: c.x, y: c.y, column_id: c.column_id ?? null, sort: c.sort ?? null }));
+        await patchCards(
+          top.map((c) => ({ id: c.id, board_id: boardId, column_id: null, ...place(c) })),
+          async () => {
+            await patchCards(back);
+            load();
+          }
+        );
+        load(); // arrows and stacked cards that came along
+        setSel(new Set(top.map((c) => c.id)));
+        return;
+      }
+      const ids = new Map(clip.cards.map((c) => [c.id, uid()]));
+      const isTop = new Set(top.map((c) => c.id));
+      const list = [...top, ...clip.cards.filter((c) => !isTop.has(c.id))].map((c) => {
+        const n = { id: ids.get(c.id), type: c.type, w: c.w, color: c.color, data: { ...c.data } };
+        if (isTop.has(c.id)) Object.assign(n, place(c));
+        else Object.assign(n, { column_id: ids.get(c.column_id), sort: c.sort });
+        if (c.type === 'board') {
+          n.copyFrom = c.data.boardId;
+          delete n.data.boardId;
+        }
+        return n;
+      });
+      const made = await createCards(list);
+      if (!made.length) return;
+      for (const a of clip.arrows || []) {
+        if (ids.has(a.from_card) && ids.has(a.to_card)) createArrow(ids.get(a.from_card), ids.get(a.to_card), { record: false, label: a.label });
+      }
+      setSel(new Set(top.map((c) => ids.get(c.id))));
+    },
+    [boardId, patchCards, createCards, createArrow, load]
+  );
+
+  // Menu paste: whatever the system clipboard holds if the browser lets us read it, else our own copy.
+  const pasteAt = useCallback(
+    async (at) => {
+      try {
+        for (const it of (await navigator.clipboard?.read?.()) || []) {
+          if (it.types.includes('web ' + CLIP_TYPE)) return pasteClip(JSON.parse(await (await it.getType('web ' + CLIP_TYPE)).text()), at);
+          const img = it.types.find((t) => t.startsWith('image/'));
+          if (img) return addImages([new File([await it.getType(img)], 'pasted.' + img.split('/')[1], { type: img })], at);
+          if (it.types.includes('text/plain')) {
+            const text = await (await it.getType('text/plain')).text();
+            const stored = readClip();
+            if (stored && stored.text === text) return pasteClip(stored, at);
+            if (text.trim()) return isUrl(text) ? addLink(text.trim(), at) : addText(text, at);
+          }
+        }
+      } catch {
+        // No permission (or plain http): fall back to our own copy.
+      }
+      const stored = readClip();
+      if (stored) return pasteClip(stored, at);
+      notify('Nothing to paste');
+    },
+    [pasteClip, addImages, addLink, addText, notify]
+  );
+
+  // A cut pasted in another tab clears the dimming here.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== CLIP_KEY) return;
+      const clip = readClip();
+      setCutIds(clip?.cut && clip.board === boardId ? new Set(clip.cards.map((c) => c.id)) : EMPTY);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [boardId]);
+
+  // ---------- context menu ----------
+  const openMenuRef = useRef(null);
+  openMenuRef.current = (cx, cy, target) => {
+    const at = toWorld(cx, cy);
+    const cardEl = target?.closest?.('[data-card-id]');
+    let ids = null;
+    if (cardEl) {
+      const id = cardEl.dataset.cardId;
+      ids = S.current.sel.has(id) ? [...S.current.sel] : [id];
+      if (!S.current.sel.has(id)) setSel(new Set([id]));
+    }
+    setColorOpen(false);
+    setCtx({ x: cx, y: cy, ids, at: { x: Math.round(at.x), y: Math.round(at.y) } });
+    api('GET', '/api/boards')
+      .then((r) => setBoardList(r.boards))
+      .catch(() => {});
+  };
+  const closeMenu = useCallback(() => setCtx(null), []);
+
+  function menuItems({ ids, at }) {
+    if (!ids) {
+      return [
+        { label: 'Paste', icon: 'paste', shortcut: 'Ctrl+V', onClick: () => pasteAt(at) },
+        { separator: true },
+        ...TOOLS.map((t) => ({ label: t.label, icon: t.icon, onClick: () => addTool(t.kind, at) })),
+        { separator: true },
+        { label: 'Select all', icon: 'select', shortcut: 'Ctrl+A', onClick: selectAll },
+        { label: 'Fit to screen', icon: 'fit', onClick: fitAll },
+      ];
+    }
+    const cs = S.current.cards;
+    const single = ids.length === 1 ? cs[ids[0]] : null;
+    const many = ids.length > 1 ? ` ${ids.length} cards` : '';
+    // A board can't go into itself or anything inside it.
+    const excluded = new Set();
+    const exclude = (id) => {
+      excluded.add(id);
+      for (const b of boardList) if (b.parent_id === id && !excluded.has(b.id)) exclude(b.id);
+    };
+    for (const id of ids) if (cs[id]?.type === 'board') exclude(cs[id].data.boardId);
+    const tree = (parent) =>
+      boardList
+        .filter((b) => b.parent_id === parent && !excluded.has(b.id))
+        .map((b) => {
+          const sub = tree(b.id);
+          return { label: b.title || 'Untitled', icon: 'board', disabled: b.id === boardId, onClick: () => moveToBoard(ids, b.id), submenu: sub.length ? sub : undefined };
+        });
+    const home = boardList.find((b) => b.id === 'root');
+    const moveItems = boardList.length
+      ? [{ label: home?.title || 'Home', icon: 'home', disabled: boardId === 'root', onClick: () => moveToBoard(ids, 'root'), submenu: tree('root') }]
+      : [{ label: 'Loading…', disabled: true }];
+    const opens = single && ['board', 'link', 'image'].includes(single.type);
+    return [
+      single && { label: opens ? 'Open' : 'Edit', icon: opens ? 'open' : 'edit', shortcut: opens ? 'Dbl-click' : 'Enter', onClick: () => (opens ? openCard(single) : startEdit(single.id)) },
+      single && opens && single.type !== 'image' && { label: single.type === 'board' ? 'Rename' : 'Edit link', icon: 'edit', shortcut: 'Enter', onClick: () => startEdit(single.id) },
+      single && { separator: true },
+      { label: 'Copy' + many, icon: 'copy', shortcut: 'Ctrl+C', onClick: () => { const c = copySelection(false, ids); if (c) toSystemClipboard(c); } }, // prettier-ignore
+      { label: 'Cut' + many, icon: 'cut', shortcut: 'Ctrl+X', onClick: () => { const c = copySelection(true, ids); if (c) toSystemClipboard(c); } }, // prettier-ignore
+      { label: 'Paste', icon: 'paste', shortcut: 'Ctrl+V', onClick: () => pasteAt(at) },
+      { label: 'Duplicate', icon: 'duplicate', shortcut: 'Ctrl+D', onClick: () => duplicate(ids) },
+      { separator: true },
+      { label: 'Move to board', icon: 'board', submenu: moveItems },
+      { label: 'Colour', icon: 'palette', submenu: COLORS.map((c) => ({ label: c.label, swatch: c.id, onClick: () => setColor(c.id, ids) })) },
+      { label: 'Bring to front', icon: 'front', onClick: () => bringToFront(ids) },
+      { label: 'Send to back', icon: 'back', onClick: () => sendToBack(ids) },
+      { separator: true },
+      { label: 'Delete' + many, icon: 'trash', shortcut: 'Del', danger: true, onClick: () => deleteCards(ids) },
+    ].filter(Boolean);
+  }
 
   // ---------- drop targets ----------
   const findHint = useCallback(
@@ -633,18 +900,20 @@ export default function Board({ boardId, focus, onInfo }) {
     (e) => {
       if (lightbox) return;
       const t = e.target;
+      if (t.closest('.ctx-menu')) return;
       pointer.current = { x: e.clientX, y: e.clientY };
       lastPointerType.current = e.pointerType;
       if (e.pointerType === 'touch' && !t.closest('[data-handle]')) {
         touchDownRef.current(e);
         return;
       }
-      setAddMenu(null);
       const v = S.current.view;
       let g = null;
-      if (e.button === 1 || e.button === 2 || (space.current && e.button === 0)) {
+      // Right button (or Ctrl+click on a Mac): pan when dragged, context menu when released in place.
+      const menuButton = e.button === 2 || (IS_MAC && e.button === 0 && e.ctrlKey);
+      if (e.button === 1 || menuButton || (space.current && e.button === 0)) {
         e.preventDefault();
-        g = { type: 'pan', sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
+        g = { type: 'pan', sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y, menu: menuButton, target: t };
       } else if (e.button !== 0) {
         return;
       } else if (t.closest('[data-handle]')) {
@@ -772,7 +1041,9 @@ export default function Board({ boardId, focus, onInfo }) {
           setHint(null);
           return;
         }
-        if (g.type === 'resize' && g.w && g.w !== g.w0) {
+        if (g.type === 'pan' && g.menu && Math.hypot(ev.clientX - g.sx, ev.clientY - g.sy) < 4) {
+          openMenuRef.current(ev.clientX, ev.clientY, g.target);
+        } else if (g.type === 'resize' && g.w && g.w !== g.w0) {
           patchCards([{ id: g.id, w: g.w }], () => patchCards([{ id: g.id, w: g.w0 }]));
         } else if (g.type === 'arrow') {
           setTempArrow(null);
@@ -844,8 +1115,7 @@ export default function Board({ boardId, focus, onInfo }) {
       return;
     }
     const t = e.target;
-    if (!t.closest('.add-menu')) setAddMenu(null);
-    if (t.closest('input, textarea, select, button, a, [contenteditable="true"], .float-bar, .format-bar, .add-menu')) {
+    if (t.closest('input, textarea, select, button, a, [contenteditable="true"], .float-bar, .format-bar, .ctx-menu')) {
       touchG.current = null;
       return;
     }
@@ -881,7 +1151,7 @@ export default function Board({ boardId, focus, onInfo }) {
         if (touchG.current !== g) return;
         g.fired = true;
         navigator.vibrate?.(15);
-        setAddMenu({ x: e.clientX, y: e.clientY, at: toWorld(e.clientX, e.clientY) });
+        openMenuRef.current(e.clientX, e.clientY, null);
       }, 550);
       touchG.current = g;
     }
@@ -1001,6 +1271,15 @@ export default function Board({ boardId, focus, onInfo }) {
   );
 
   // ---------- keyboard, paste, drop ----------
+  const clipEventAt = useRef(0);
+  // Where pasted things go: under the pointer if it is over the board, else the middle of the screen.
+  const pointerWorld = useCallback(() => {
+    const p = pointer.current;
+    const r = canvasRef.current.getBoundingClientRect();
+    const inside = p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
+    return inside ? toWorld(p.x, p.y) : centerWorld();
+  }, [toWorld, centerWorld]);
+
   useEffect(() => {
     const down = (e) => {
       const typing = e.target.closest?.('input, textarea, [contenteditable="true"]');
@@ -1029,7 +1308,17 @@ export default function Board({ boardId, focus, onInfo }) {
         undo();
       } else if (mod && key === 'a') {
         e.preventDefault();
-        setSel(new Set(Object.values(cards).filter((c) => !c.column_id || !cards[c.column_id]).map((c) => c.id)));
+        selectAll();
+      } else if (mod && (key === 'c' || key === 'x' || key === 'v')) {
+        // The copy/cut/paste events below do the work; this is the fallback if the browser sends none.
+        const t = Date.now();
+        setTimeout(() => {
+          if (clipEventAt.current >= t) return;
+          if (key === 'v') {
+            const clip = readClip();
+            if (clip) pasteClip(clip, pointerWorld());
+          } else if (sel.size) copySelection(key === 'x');
+        }, 80);
       } else if (mod && key === 'd') {
         e.preventDefault();
         duplicate();
@@ -1050,14 +1339,34 @@ export default function Board({ boardId, focus, onInfo }) {
         canvasRef.current?.classList.remove('panning');
       }
     };
+    const copyOrCut = (e) => {
+      if (e.target.closest?.('input, textarea, [contenteditable="true"]') || !S.current.sel.size) return;
+      clipEventAt.current = Date.now();
+      const clip = copySelection(e.type === 'cut');
+      if (!clip) return;
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', clip.text || ' ');
+      e.clipboardData.setData(CLIP_TYPE, JSON.stringify(clip));
+    };
     const paste = (e) => {
       if (e.target.closest?.('input, textarea, [contenteditable="true"]')) return;
       const dt = e.clipboardData;
       if (!dt) return;
-      const p = pointer.current;
-      const r = canvasRef.current.getBoundingClientRect();
-      const inside = p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
-      const at = inside ? toWorld(p.x, p.y) : centerWorld();
+      clipEventAt.current = Date.now();
+      const at = pointerWorld();
+      // Cards copied in ZBoard (this tab or another): our own format, or our plain text echo.
+      let clip = null;
+      try {
+        clip = JSON.parse(dt.getData(CLIP_TYPE) || 'null');
+      } catch {}
+      const stored = readClip();
+      const plainText = dt.getData('text/plain');
+      if (!clip?.zboard && stored && (plainText === stored.text || (!plainText && !dt.files.length))) clip = stored;
+      if (clip?.zboard) {
+        e.preventDefault();
+        pasteClip(clip, at);
+        return;
+      }
       const files = [...dt.files];
       if (files.length) {
         e.preventDefault();
@@ -1073,12 +1382,16 @@ export default function Board({ boardId, focus, onInfo }) {
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', upKey);
     window.addEventListener('paste', paste);
+    window.addEventListener('copy', copyOrCut);
+    window.addEventListener('cut', copyOrCut);
     return () => {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', upKey);
       window.removeEventListener('paste', paste);
+      window.removeEventListener('copy', copyOrCut);
+      window.removeEventListener('cut', copyOrCut);
     };
-  }, [lightbox, undo, duplicate, deleteArrow, deleteCards, startEdit, zoomCenter, toWorld, centerWorld, addImages, addLink, addText]);
+  }, [lightbox, undo, duplicate, deleteArrow, deleteCards, startEdit, zoomCenter, selectAll, copySelection, pasteClip, pointerWorld, addImages, addLink, addText]);
 
   const onDragOver = (e) => {
     const types = [...e.dataTransfer.types];
@@ -1136,12 +1449,23 @@ export default function Board({ boardId, focus, onInfo }) {
             files={files}
             dragIds={dragIds}
             dropIndex={hint?.columnId === c.id ? hint.index : null}
+            cut={cutIds.has(c.id)}
+            cutIds={cutIds}
           />
         ) : (
-          <CardView key={c.id} card={c} selected={sel.has(c.id)} editing={editing === c.id} dragging={dragIds.has(c.id)} actions={actions} file={files[c.data.fileId]} />
+          <CardView
+            key={c.id}
+            card={c}
+            selected={sel.has(c.id)}
+            editing={editing === c.id}
+            dragging={dragIds.has(c.id)}
+            cut={cutIds.has(c.id)}
+            actions={actions}
+            file={files[c.data.fileId]}
+          />
         )
       ),
-    [topCards, kidsOf, sel, editing, dragIds, actions, files, hint]
+    [topCards, kidsOf, sel, editing, dragIds, cutIds, actions, files, hint]
   );
 
   const arrowLayer = useMemo(() => {
@@ -1240,6 +1564,7 @@ export default function Board({ boardId, focus, onInfo }) {
         ref={canvasRef}
         style={{ backgroundSize: `${gridSize}px ${gridSize}px`, backgroundPosition: `${view.x}px ${view.y}px` }}
         onPointerDown={onPointerDown}
+        onPointerMove={(e) => (pointer.current = { x: e.clientX, y: e.clientY })}
         onDoubleClick={onDoubleClick}
         onContextMenu={(e) => e.preventDefault()}
         onDragOver={onDragOver}
@@ -1312,21 +1637,7 @@ export default function Board({ boardId, focus, onInfo }) {
           </div>
         )}
 
-        {addMenu && (
-          <div className="add-menu" style={{ left: clamp(addMenu.x - canvasRef.current.getBoundingClientRect().left, 8, canvasRef.current.clientWidth - 188), top: clamp(addMenu.y - canvasRef.current.getBoundingClientRect().top, 8, canvasRef.current.clientHeight - 300) }}>
-            {TOOLS.map((t) => (
-              <button
-                key={t.kind}
-                onClick={() => {
-                  addTool(t.kind, { x: Math.round(addMenu.at.x), y: Math.round(addMenu.at.y) });
-                  setAddMenu(null);
-                }}
-              >
-                <Icon name={t.icon} size={18} /> {t.label}
-              </button>
-            ))}
-          </div>
-        )}
+        {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={menuItems(ctx)} onClose={closeMenu} />}
 
         <div className="zoom-ctl">
           <button className="icon-btn" onClick={() => zoomCenter(0.8)} data-tip="Zoom out (−)" aria-label="Zoom out">
