@@ -220,9 +220,10 @@ const miniPath = (id) => path.join(DIRS.minis, id + '.webp');
 const originalPath = (f) => path.join(DIRS.files, f.id + f.ext);
 const displayPath = (f) => path.join(DIRS.files, f.id + (f.display_ext || f.ext));
 
-async function storeUpload(f) {
+// f: { path, originalname, mimetype, size }; the temp file at f.path is moved into files/.
+async function storeUpload(f, { utf8Name = false } = {}) {
   const id = newId();
-  const name = Buffer.from(f.originalname, 'latin1').toString('utf8');
+  const name = utf8Name ? f.originalname : Buffer.from(f.originalname, 'latin1').toString('utf8');
   const ext = safeExt(name, f.mimetype);
   const dest = path.join(DIRS.files, id + ext);
   fs.renameSync(f.path, dest);
@@ -271,6 +272,99 @@ app.post('/api/upload', upload.array('file', 50), async (req, res) => {
   }
   if (!files.length) throw new HttpError(400, 'No file sent (use the form field "file")');
   res.status(201).json({ file: files[0], files });
+});
+
+// ---- remote fetches (link previews, images dragged from other sites) ----
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36 ZBoard';
+
+function httpUrl(raw) {
+  try {
+    const u = new URL(String(raw || '').trim());
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u;
+  } catch {}
+  throw new HttpError(400, 'Not a valid http(s) link');
+}
+
+async function fetchCapped(url, maxBytes, accept) {
+  let res;
+  try {
+    res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(10_000), headers: { 'user-agent': UA, accept } });
+  } catch (e) {
+    throw new HttpError(502, `Couldn't reach ${new URL(url).host}: ${e.cause?.code || e.message}`);
+  }
+  if (!res.ok) throw new HttpError(502, `${new URL(url).host} answered ${res.status}`);
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of res.body) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      await res.body.cancel?.().catch(() => {});
+      throw new HttpError(413, `Download is larger than ${Math.round(maxBytes / 1024 / 1024)} MB`);
+    }
+    chunks.push(chunk);
+  }
+  return { buf: Buffer.concat(chunks), type: (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase(), finalUrl: res.url || url };
+}
+
+async function storeRemoteImage(url) {
+  const { buf, type, finalUrl } = await fetchCapped(url, MAX_UPLOAD_MB * 1024 * 1024, 'image/avif,image/webp,image/*,*/*;q=0.8');
+  if (type && !type.startsWith('image/') && type !== 'application/octet-stream') throw new HttpError(415, `That link is not an image (${type})`);
+  const tmp = path.join(DIRS.tmp, 'dl-' + newId());
+  fs.writeFileSync(tmp, buf);
+  const base = decodeURIComponent(path.basename(new URL(finalUrl).pathname)) || 'image';
+  try {
+    return await storeUpload({ path: tmp, originalname: base.slice(0, 200), mimetype: type || 'application/octet-stream', size: buf.length }, { utf8Name: true });
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+const decodeEntities = (s) =>
+  s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) =>
+    e[0] === '#' ? String.fromCodePoint(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : ENTITIES[e.toLowerCase()] ?? m
+  );
+
+function parseMeta(html) {
+  const meta = {};
+  for (const tag of html.match(/<meta\b[^>]*>/gi) || []) {
+    const attrs = {};
+    for (const m of tag.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) attrs[m[1].toLowerCase()] = m[2] ?? m[3];
+    const key = (attrs.property || attrs.name || '').toLowerCase();
+    if (key && attrs.content && !(key in meta)) meta[key] = decodeEntities(attrs.content).trim();
+  }
+  const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+  if (title) meta['<title>'] = decodeEntities(title).replace(/\s+/g, ' ').trim();
+  return meta;
+}
+
+app.get('/api/link-preview', async (req, res) => {
+  const url = httpUrl(req.query.url);
+  const { buf, type, finalUrl } = await fetchCapped(url.href, 3 * 1024 * 1024, 'text/html,application/xhtml+xml,*/*;q=0.5');
+  const out = { url: url.href, title: null, description: null, site: new URL(finalUrl).hostname.replace(/^www\./, ''), image: null };
+  if (type.startsWith('image/')) {
+    out.image = (await storeRemoteImage(url.href)).id;
+    out.title = path.basename(url.pathname) || out.site;
+    return res.json(out);
+  }
+  const meta = parseMeta(buf.toString('utf8'));
+  out.title = meta['og:title'] || meta['twitter:title'] || meta['<title>'] || out.site;
+  out.description = meta['og:description'] || meta['twitter:description'] || meta.description || null;
+  out.site = meta['og:site_name'] || out.site;
+  const img = meta['og:image'] || meta['og:image:url'] || meta['twitter:image'] || meta['twitter:image:src'];
+  if (img) {
+    try {
+      out.image = (await storeRemoteImage(new URL(img, finalUrl).href)).id;
+    } catch {
+      // A preview without a picture is still useful.
+    }
+  }
+  res.json(out);
+});
+
+app.post('/api/upload-url', async (req, res) => {
+  const file = await storeRemoteImage(httpUrl(req.body?.url).href);
+  res.status(201).json({ file, files: [file] });
 });
 
 function fileOr404(id) {
@@ -347,6 +441,23 @@ app.get('/api/events', (req, res) => {
 });
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+
+// ---- web app (only if built before start-up) ----
+const WEB_DIST = path.join(ROOT, 'web', 'dist');
+if (fs.existsSync(path.join(WEB_DIST, 'index.html'))) {
+  app.use(
+    express.static(WEB_DIST, {
+      index: false,
+      setHeaders(res, file) {
+        const hashed = file.includes(`${path.sep}assets${path.sep}`);
+        res.setHeader('Cache-Control', hashed ? 'public, max-age=31536000, immutable' : 'no-cache');
+      },
+    })
+  );
+  app.get(/^\/(?!api\/|files\/).*/, (req, res) => res.sendFile(path.join(WEB_DIST, 'index.html'), { headers: { 'Cache-Control': 'no-cache' } }));
+} else {
+  console.log('web/dist not found: serving the API only (run "npm run build" in web/ and restart).');
+}
 
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);

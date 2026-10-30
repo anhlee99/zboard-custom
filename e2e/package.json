@@ -1,0 +1,12 @@
+{
+  "name": "zboard-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Headless browser checks. Uses an installed Edge (PW_CHANNEL=chrome for Chrome). Run against a server started from an empty data dir with APP_PASSWORD=testpw.",
+  "scripts": {
+    "step2": "node step2.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.64.1"
+  }
+}
