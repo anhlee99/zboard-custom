@@ -365,7 +365,7 @@ function BoardBody({ card, editing, actions }) {
   );
 }
 
-function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropIndex, dragIds, cutIds, lowRes }) {
+function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropIndex, dragIds, cutIds, lowRes, lowResNow, settledS }) {
   return (
     <>
       <div className="col-head">
@@ -400,6 +400,8 @@ function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropI
               dragging={dragIds.has(k.id)}
               cut={cutIds?.has(k.id)}
               lowRes={lowRes}
+              lowResNow={lowResNow}
+              settledS={settledS}
             />
           </Fragment>
         ))}
@@ -426,6 +428,14 @@ const BODIES = { note: NoteBody, todo: TodoBody, image: ImageBody, link: LinkBod
 
 export const CardView = memo(function CardView(props) {
   const { card, inColumn, selected, editing, dragging, cut, hidden } = props;
+  // Image size: a card that mounts mid-zoom takes the size for the current zoom; after that it only
+  // follows the settled zoom, so a zoom never makes every visible image reload at once.
+  const [lowRes, setLowRes] = useState(props.lowResNow ?? props.lowRes);
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (mounted.current) setLowRes(props.lowRes);
+    mounted.current = true;
+  }, [props.lowRes, props.settledS]);
   const style = inColumn ? undefined : { left: card.x, top: card.y, width: card.w || DEFAULT_W[card.type], zIndex: card.z };
   const cutout = card.type === 'image' && props.file?.alpha === 1; // see-through PNG: no card frame
   const cls = ['card', `card-${card.type}`, cutout && 'cutout', selected && 'selected', editing && 'editing', dragging && 'dragging', cut && 'cut', hidden && (card.type === 'image' ? 'ink-hide' : 'ink-editing'), card.color && `c-${card.color}`, inColumn && 'in-column']
@@ -434,7 +444,7 @@ export const CardView = memo(function CardView(props) {
   const Body = card.type === 'column' ? ColumnBody : BODIES[card.type];
   return (
     <div className={cls} style={style} data-card-id={card.id} data-drop-board={card.type === 'board' ? card.data.boardId : undefined}>
-      {Body && <Body {...props} />}
+      {Body && <Body {...props} lowRes={lowRes} />}
       {card.type !== 'image' && card.type !== 'column' && <LabelChips labels={card.data.labels} />}
       {selected && !inColumn && !editing && (
         <>

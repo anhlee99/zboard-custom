@@ -297,12 +297,15 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   // frame. Building that layer takes 150-250 ms, so it is kept rather than made per pan. A kept
   // layer stays drawn at the zoom it was made at, so once a zoom has settled, drop and re-add it
   // for a frame to have it redrawn sharp at the new scale.
+  // settledS is the zoom once it has stopped changing; image sizes follow it, not every step.
+  const [settledS, setSettledS] = useState(view.s);
   const redrawTimer = useRef(0);
   useEffect(() => {
     const el = worldRef.current;
     if (!el) return;
     clearTimeout(redrawTimer.current);
     redrawTimer.current = setTimeout(() => {
+      setSettledS(view.s);
       el.style.willChange = 'auto';
       requestAnimationFrame(() => requestAnimationFrame(() => (el.style.willChange = '')));
     }, 300);
@@ -1705,7 +1708,9 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   const TILE = 600;
   let cullKey = 'all';
   if (topCards.length > CULL_AFTER) {
-    const tile = TILE / view.s;
+    // Tiles are sized for the zoom rounded down to a power of two, so zooming only changes the set
+    // of rendered cards when an edge crosses a tile or the zoom passes a doubling, not every step.
+    const tile = TILE / 2 ** Math.floor(Math.log2(view.s));
     const i0 = Math.floor(-view.x / view.s / tile) - 1;
     const j0 = Math.floor(-view.y / view.s / tile) - 1;
     const i1 = Math.ceil((canvasSize.w - view.x) / view.s / tile) + 1;
@@ -1727,7 +1732,10 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   }, [topCards, cullKey, sel, editing, dragIds]);
 
   // Far out, images load the 256 px mini instead of the 800 px thumbnail.
-  const lowRes = view.s < 0.45;
+  // Swapping every image between thumbnail and mini mid-zoom reloads hundreds at once (measured:
+  // switching on the way out doubled the worst zoom frame), so the switch waits for the zoom to settle.
+  const lowRes = settledS < 0.45;
+  const lowResNow = view.s < 0.45; // for cards that appear mid-zoom: right size straight away
 
   // Watch card sizes. Keyed on which cards are rendered, not their positions, so a drag
   // does not re-subscribe every card on every mouse move.
@@ -1758,6 +1766,8 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             cut={cutIds.has(c.id)}
             cutIds={cutIds}
             lowRes={lowRes}
+            lowResNow={lowResNow}
+            settledS={settledS}
           />
         ) : (
           <CardView
@@ -1770,11 +1780,13 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             actions={actions}
             file={files[c.data.fileId]}
             lowRes={lowRes}
+            lowResNow={lowResNow}
+            settledS={settledS}
             hidden={drawing?.cardId === c.id}
           />
         )
       ),
-    [shown, kidsOf, sel, editing, dragIds, cutIds, actions, files, hint, lowRes, drawing?.cardId]
+    [shown, kidsOf, sel, editing, dragIds, cutIds, actions, files, hint, lowRes, lowResNow, settledS, drawing?.cardId]
   );
 
   const arrowLayer = useMemo(() => {
