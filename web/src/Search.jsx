@@ -15,7 +15,7 @@ export default function Search({ initial, onClose }) {
   const [results, setResults] = useState([]);
   const [tags, setTags] = useState([]);
   const [active, setActive] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [answered, setAnswered] = useState(''); // the query the current results belong to
   const listRef = useRef(null);
 
   useEffect(() => {
@@ -32,7 +32,6 @@ export default function Search({ initial, onClose }) {
       setResults([]);
       return;
     }
-    setLoading(true);
     const t = setTimeout(async () => {
       try {
         const url = tagOnly ? `/api/search?tag=${encodeURIComponent(tagOnly)}` : `/api/search?q=${encodeURIComponent(query)}`;
@@ -44,7 +43,7 @@ export default function Search({ initial, onClose }) {
       } catch {
         if (alive) setResults([]);
       } finally {
-        if (alive) setLoading(false);
+        if (alive) setAnswered(query);
       }
     }, 120);
     return () => {
@@ -101,7 +100,7 @@ export default function Search({ initial, onClose }) {
                 </div>
               </li>
             ))}
-            {!results.length && !loading && <li className="sr-empty">No matches</li>}
+            {!results.length && answered === q.trim() && <li className="sr-empty">No matches</li>}
           </ul>
         ) : (
           <div className="tag-cloud scrolls">

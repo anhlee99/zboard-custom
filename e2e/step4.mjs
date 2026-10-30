@@ -109,7 +109,7 @@ check(chipQ === '#minis' && chipN === 1, 'clicking a chip searches that tag', `$
 await page.keyboard.press('Escape');
 await page.keyboard.press('Control+k');
 await page.keyboard.type('deep');
-await page.waitForSelector('.search-results li');
+await page.waitForSelector('.search-results li:not(.sr-empty)');
 await page.keyboard.press('Enter');
 await page.waitForFunction(() => document.querySelectorAll('.crumb').length === 3);
 check((await page.locator('.crumb').allTextContents()).join('/') === 'Home/Résumé/Inner', 'result in a nested board opens that board');
