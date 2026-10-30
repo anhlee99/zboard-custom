@@ -41,6 +41,11 @@ const PATHS = {
   arrowEnd: 'M4 12h15 M14 7l5 5-5 5',
   label: 'M3 8h18v8H3z M7 12h10',
   dashed: 'M3 12h3 M10.5 12h3 M18 12h3',
+  draw: 'M4 20l4-1L19 8l-3-3L5 16z M14 6l3 3',
+  pointer: 'M6 3l12 7-5.5 1.5L10 17z',
+  eraser: 'M4 15l8.5-8.5a2 2 0 0 1 2.8 0l3.2 3.2a2 2 0 0 1 0 2.8L13 18H7z M9 18h11 M9 10l5 5',
+  undo: 'M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3',
+  redo: 'M15 14l5-5-5-5 M20 9H10a6 6 0 0 0 0 12h3',
 };
 
 export function Icon({ name, size = 20, ...rest }) {

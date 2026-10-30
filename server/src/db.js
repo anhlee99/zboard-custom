@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import { openDatabase } from './sqlite.js';
 
-export const CARD_TYPES = new Set(['note', 'todo', 'image', 'link', 'board', 'column']);
+export const CARD_TYPES = new Set(['note', 'todo', 'image', 'link', 'board', 'column', 'drawing']);
 export const newId = () => crypto.randomBytes(9).toString('base64url');
 export const isId = (s) => typeof s === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(s);
 
@@ -173,6 +173,29 @@ function num(v, name, { int = false, nullable = true } = {}) {
 }
 const str = (v, max = 2000) => (v === null || v === undefined ? null : String(v).slice(0, max));
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+
+// Drawings: at most 2000 strokes of 5000 points; numbers only, hex colours, sane sizes.
+const num1 = (v) => Math.round(Number(v) * 10) / 10;
+function cleanStrokes(list) {
+  return (Array.isArray(list) ? list : []).slice(0, 2000).flatMap((st) => {
+    if (!obj(st) || !Array.isArray(st.p)) return [];
+    const p = st.p.slice(0, 15000).map(num1);
+    if (p.length < 3 || p.some((n) => !Number.isFinite(n))) return [];
+    p.length -= p.length % 3;
+    const s = Math.min(200, Math.max(0.5, Number(st.s) || 6));
+    return [{ c: HEX.test(st.c) ? st.c.toLowerCase() : '#23221f', s, p }];
+  });
+}
+const size1 = (v) => Math.min(100000, Math.max(1, Number(v) || 1));
+// Drawing cards hold strokes; images may carry strokes drawn over them (data.ink).
+function cleanData(type, data) {
+  if (type === 'drawing') return { strokes: cleanStrokes(data.strokes), vw: size1(data.vw), vh: size1(data.vh) };
+  if (type === 'image' && 'ink' in data) {
+    const strokes = obj(data.ink) ? cleanStrokes(data.ink.strokes) : [];
+    return { ...data, ink: strokes.length ? { strokes, vw: size1(data.ink.vw), vh: size1(data.ink.vh) } : null };
+  }
+  return data;
+}
 
 // Board cover: an icon (emoji) or a few letters, on a background colour with a text colour.
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -401,7 +424,7 @@ export function createStore(file) {
     if (c.id != null && !isId(c.id)) throw new HttpError(400, 'Bad card id');
     const id = c.id || newId();
     if (getCard(id)) throw new HttpError(409, `Card ${id} already exists`);
-    const data = { ...(obj(c.data) ?? {}) };
+    const data = cleanData(c.type, { ...(obj(c.data) ?? {}) });
     if (c.type === 'board') {
       data.boardId = c.copyFrom ? copyBoard(String(c.copyFrom), boardId) : createBoard(boardId, c.title ?? data.title ?? 'New board');
       delete data.title;
@@ -470,7 +493,7 @@ export function createStore(file) {
       for (const [f, opts] of Object.entries(FIELDS)) if (f in p) next[f] = num(p[f], f, opts);
       if ('color' in p) next.color = str(p.color, 50);
       if ('column_id' in p) next.column_id = p.column_id || null;
-      if (obj(p.data)) next.data = JSON.stringify({ ...card.data, ...p.data, ...(card.type === 'board' ? { boardId: card.data.boardId } : {}) });
+      if (obj(p.data)) next.data = JSON.stringify(cleanData(card.type, { ...card.data, ...p.data, ...(card.type === 'board' ? { boardId: card.data.boardId } : {}) }));
       if (!Object.keys(next).length) continue;
       next.updated_at = now();
       const sets = Object.keys(next).map((k) => `${k} = :${k}`).join(', ');
