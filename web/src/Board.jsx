@@ -631,6 +631,14 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       setDrawing(null);
       if (!d) return;
       const old = d.cardId ? S.current.cards[d.cardId] : null;
+      if (d.kind === 'ink') {
+        if (!old) return;
+        const k = 1000 / d.frame.w;
+        const ink = strokes.length ? { strokes: mapStrokes(strokes, k, -d.frame.x * k, -d.frame.y * k), vw: 1000, vh: Math.round(d.frame.h * k) } : null;
+        patchCards([{ id: old.id, data: { ink } }], () => patchCards([{ id: old.id, data: { ink: old.data.ink ?? null } }]));
+        setSel(new Set([old.id]));
+        return;
+      }
       if (!strokes.length) {
         if (old) deleteCards([old.id]);
         return;
@@ -735,6 +743,19 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     if (!c) return setDrawing({ cardId: null, strokes: [] });
     const k = (c.w || DEFAULT_W.drawing) / (c.data.vw || 1);
     setDrawing({ cardId: c.id, strokes: mapStrokes(c.data.strokes || [], k, c.x, c.y) });
+  }, []);
+
+  // Draw on an image: strokes are kept on the image card in 1000-unit-wide image space.
+  const openInk = useCallback((c) => {
+    const cardEl = worldRef.current?.querySelector(`[data-card-id="${CSS.escape(c.id)}"]`);
+    const wrap = cardEl?.querySelector('.img-wrap');
+    const r = rects.current.get(c.id);
+    if (!wrap || !r) return;
+    setSel(EMPTY);
+    setEditing(null);
+    const frame = { x: r.x + cardEl.clientLeft + wrap.offsetLeft, y: r.y + cardEl.clientTop + wrap.offsetTop, w: wrap.offsetWidth, h: wrap.offsetHeight };
+    const ink = c.data.ink;
+    setDrawing({ cardId: c.id, kind: 'ink', frame, strokes: ink ? mapStrokes(ink.strokes, frame.w / (ink.vw || 1000), frame.x, frame.y) : [] });
   }, []);
 
   const openCard = useCallback((c) => {
@@ -1025,6 +1046,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       single && opens && single.type !== 'image' && { label: single.type === 'board' ? 'Rename' : 'Edit link', icon: 'edit', shortcut: 'Enter', onClick: () => startEdit(single.id) },
       single?.type === 'board' && { label: 'Change cover', icon: 'palette', onClick: () => setCoverFor(single.id) },
       single?.type === 'drawing' && { label: 'Edit drawing', icon: 'draw', shortcut: 'Dbl-click', onClick: () => openDrawing(single) },
+      single?.type === 'image' && !single.column_id && { label: single.data.ink ? 'Edit drawing on image' : 'Draw on image', icon: 'draw', onClick: () => openInk(single) },
       single && { separator: true },
       { label: 'Copy' + many, icon: 'copy', shortcut: 'Ctrl+C', onClick: () => { const c = copySelection(false, ids); if (c) toSystemClipboard(c); } }, // prettier-ignore
       { label: 'Cut' + many, icon: 'cut', shortcut: 'Ctrl+X', onClick: () => { const c = copySelection(true, ids); if (c) toSystemClipboard(c); } }, // prettier-ignore
@@ -1867,6 +1889,11 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
                 </div>
               )}
             </div>
+            {single?.type === 'image' && !single.column_id && (
+              <button className="icon-btn" onClick={() => openInk(single)} data-tip="Draw on image" aria-label="Draw on image">
+                <Icon name="draw" size={18} />
+              </button>
+            )}
             {single?.type === 'board' && (
               <button className="icon-btn" onClick={() => setCoverFor((f) => (f ? null : single.id))} data-tip="Cover: icon, text and colour" aria-label="Cover">
                 <Icon name="image" size={18} />
@@ -1986,7 +2013,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
           </div>
         )}
 
-        {drawing && <DrawLayer key={drawing.cardId || 'new'} view={view} canvasRef={canvasRef} initial={drawing.strokes} onSave={saveDrawing} onCancel={() => setDrawing(null)} />}
+        {drawing && <DrawLayer key={drawing.cardId || 'new'} view={view} canvasRef={canvasRef} initial={drawing.strokes} frame={drawing.frame} onSave={saveDrawing} onCancel={() => setDrawing(null)} />}
 
         {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={menuItems(ctx)} onClose={closeMenu} />}
 

@@ -176,9 +176,8 @@ const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
 
 // Drawings: at most 2000 strokes of 5000 points; numbers only, hex colours, sane sizes.
 const num1 = (v) => Math.round(Number(v) * 10) / 10;
-function cleanData(type, data) {
-  if (type !== 'drawing') return data;
-  const strokes = (Array.isArray(data.strokes) ? data.strokes : []).slice(0, 2000).flatMap((st) => {
+function cleanStrokes(list) {
+  return (Array.isArray(list) ? list : []).slice(0, 2000).flatMap((st) => {
     if (!obj(st) || !Array.isArray(st.p)) return [];
     const p = st.p.slice(0, 15000).map(num1);
     if (p.length < 3 || p.some((n) => !Number.isFinite(n))) return [];
@@ -186,8 +185,16 @@ function cleanData(type, data) {
     const s = Math.min(200, Math.max(0.5, Number(st.s) || 6));
     return [{ c: HEX.test(st.c) ? st.c.toLowerCase() : '#23221f', s, p }];
   });
-  const size = (v) => Math.min(100000, Math.max(1, Number(v) || 1));
-  return { strokes, vw: size(data.vw), vh: size(data.vh) };
+}
+const size1 = (v) => Math.min(100000, Math.max(1, Number(v) || 1));
+// Drawing cards hold strokes; images may carry strokes drawn over them (data.ink).
+function cleanData(type, data) {
+  if (type === 'drawing') return { strokes: cleanStrokes(data.strokes), vw: size1(data.vw), vh: size1(data.vh) };
+  if (type === 'image' && 'ink' in data) {
+    const strokes = obj(data.ink) ? cleanStrokes(data.ink.strokes) : [];
+    return { ...data, ink: strokes.length ? { strokes, vw: size1(data.ink.vw), vh: size1(data.ink.vh) } : null };
+  }
+  return data;
 }
 
 // Board cover: an icon (emoji) or a few letters, on a background colour with a text colour.

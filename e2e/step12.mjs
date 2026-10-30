@@ -1,6 +1,6 @@
 // Drawing: pen, colour, size, eraser, select/move, undo, save as a card, edit again, resize,
 // discard, phone-size toolbar and the terminal render. Needs a server on ZB_URL with an empty data dir.
-import { api, BASE, check, done, drag, launch, login, sleep } from './lib.mjs';
+import { api, BASE, check, done, drag, launch, login, sleep, solidPng } from './lib.mjs';
 
 await api('GET', '/api/me');
 const holder = await api('POST', '/api/boards/root/cards', { cards: [{ type: 'board', x: 60, y: 60, title: 'Sketches' }] });
@@ -26,7 +26,8 @@ await drag(page, at(300, 300), at(500, 360), 20);
 await bar('Pen colour').click();
 await bar('Pen colour #ef4444').click();
 await bar('Stroke size').click();
-await bar('Stroke size 4').click();
+await page.locator('.draw-size-pop input[type=range]').fill('24');
+
 await drag(page, at(320, 420), at(520, 260), 20);
 check((await page.locator('.draw-svg path').count()) === 2, 'two strokes drawn');
 check((await page.locator('.draw-cancel').textContent()) === 'Discard' && !(await page.locator('.draw-save').isDisabled()), 'after drawing: Discard and Save');
@@ -128,6 +129,64 @@ check(ansi.includes('▀'), 'and to terminal blocks');
 const bad = await api('POST', `/api/boards/${boardId}/cards`, { cards: [{ type: 'drawing', x: 0, y: 0, data: { strokes: [{ c: 'red', s: 9999, p: [1, 2, 0.5, 'x', 3, 4] }, { p: [] }, 'nope'], vw: -5, vh: 0 } }] });
 const bd = bad.cards[0].data;
 check(bd.strokes.length === 0 && bd.vw === 1, 'bad strokes are dropped by the server', JSON.stringify(bd));
+
+// Size slider and [ ] keys.
+await page.click('.toolbar [aria-label="Draw"]');
+await bar('Stroke size').click();
+await page.locator('.draw-size-pop input[type=range]').fill('10');
+const n0 = Number(await page.locator('.draw-size-num').textContent());
+await page.keyboard.press(']');
+const n1 = Number(await page.locator('.draw-size-num').textContent());
+await page.keyboard.press('[');
+await page.keyboard.press('[');
+const n2 = Number(await page.locator('.draw-size-num').textContent());
+check(n0 === 10 && n1 > 10 && n2 < n1, 'size slider, with ] bigger and [ smaller', `${n0} ${n1} ${n2}`);
+await page.keyboard.press('Escape');
+await page.keyboard.press('Escape');
+
+// Draw on an image: strokes stay on the image card, clipped to the picture, and scale with it.
+const fd = new FormData();
+fd.append('file', new Blob([solidPng(400, 300, [70, 110, 160])], { type: 'image/png' }), 'mini.png');
+const file = (await (await fetch(BASE + '/api/upload', { method: 'POST', headers: { cookie: api.cookie }, body: fd })).json()).file;
+const imgCard = (await api('POST', `/api/boards/${boardId}/cards`, { cards: [{ type: 'image', x: 900, y: 120, w: 300, data: { fileId: file.id, caption: '' } }] })).cards[0];
+await page.reload();
+await page.waitForSelector(`[data-card-id="${imgCard.id}"] img`);
+await sleep(300);
+const imgEl = page.locator(`[data-card-id="${imgCard.id}"]`);
+await imgEl.locator('.img-wrap').click();
+await page.click('.float-bar [aria-label="Draw on image"]');
+await page.waitForSelector('.draw-layer.on-image');
+check((await page.locator('.draw-frame').count()) === 1, 'draw on image: the picture is framed, the rest dimmed');
+const wb = await imgEl.locator('.img-wrap').boundingBox();
+await bar('Pen').click();
+await drag(page, { x: wb.x + 40, y: wb.y + 40 }, { x: wb.x + wb.width - 40, y: wb.y + wb.height - 40 }, 15);
+await page.click('.draw-save');
+await sleep(500);
+let ink = (await api('GET', `/api/boards/${boardId}`)).cards.find((c) => c.id === imgCard.id).data.ink;
+check(ink?.strokes?.length === 1 && ink.vw === 1000 && Math.abs(ink.vh - 750) <= 2, 'strokes are saved on the image card', JSON.stringify(ink && { n: ink.strokes.length, vw: ink.vw, vh: ink.vh }));
+check((await imgEl.locator('.img-ink path').count()) === 1, 'the drawing shows over the image');
+// Resize: the overlay keeps covering the picture.
+await imgEl.locator('.img-wrap').click();
+const rh = await imgEl.locator('.handle-resize').boundingBox();
+await drag(page, { x: rh.x + 4, y: rh.y + 4 }, { x: rh.x + 124, y: rh.y + 4 }, 10);
+await sleep(400);
+const wrap2 = await imgEl.locator('.img-wrap').boundingBox();
+const ink2 = await imgEl.locator('.img-ink').boundingBox();
+check(wrap2.width > wb.width + 80 && Math.abs(ink2.width - wrap2.width) < 2 && Math.abs(ink2.height - wrap2.height) < 2, 'resizing the image scales its drawing');
+// Reopen, erase it all, save: the ink goes away; board undo brings it back.
+await page.click('.float-bar [aria-label="Draw on image"]');
+await page.waitForSelector('.draw-layer.on-image');
+check((await page.locator('.draw-svg path:not(.draw-dim)').count()) === 1, 'reopening shows the existing strokes');
+await bar('Eraser').click();
+const wb2 = await imgEl.locator('.img-wrap').boundingBox();
+await drag(page, { x: wb2.x + 10, y: wb2.y + wb2.height / 2 + 10 }, { x: wb2.x + wb2.width - 10, y: wb2.y + wb2.height / 2 - 10 }, 30);
+await page.click('.draw-save');
+await sleep(500);
+ink = (await api('GET', `/api/boards/${boardId}`)).cards.find((c) => c.id === imgCard.id).data.ink;
+check(ink === null && (await imgEl.locator('.img-ink').count()) === 0, 'erasing everything removes the drawing from the image');
+await page.keyboard.press('Control+z');
+await sleep(500);
+check((await imgEl.locator('.img-ink path').count()) === 1, 'board undo puts it back');
 
 // Phone size: the toolbar fits on screen.
 const phone = await login(browser, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });

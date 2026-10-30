@@ -11,6 +11,9 @@ const remembered = () => {
   }
 };
 
+const MIN_SIZE = 1;
+const MAX_SIZE = 48;
+
 // Distance from point (px, py) to segment a-b.
 function segDist(px, py, ax, ay, bx, by) {
   const dx = bx - ax;
@@ -28,13 +31,14 @@ function hits(st, x, y, slack) {
 
 // Full-board drawing mode. Strokes are in world units while editing; the board turns them
 // into a drawing card on Save. Wheel and trackpad still pan and zoom underneath.
-export default function DrawLayer({ view, canvasRef, initial, onSave, onCancel }) {
+export default function DrawLayer({ view, canvasRef, initial, frame, onSave, onCancel }) {
   const mem = remembered();
   const [strokes, setStrokes] = useState(initial);
   const [live, setLive] = useState(null);
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState(INK_COLORS.includes(mem.c) ? mem.c : INK_COLORS[0]);
-  const [size, setSize] = useState([0, 1, 2, 3].includes(mem.s) ? mem.s : 1);
+  // Older saves stored a size index 0-3; now it is the stroke width itself.
+  const [size, setSize] = useState(mem.s >= MIN_SIZE && mem.s <= MAX_SIZE && mem.s > 3 ? mem.s : INK_SIZES[mem.s] || 6);
   const [sel, setSel] = useState(() => new Set());
   const [box, setBox] = useState(null);
   const [shift, setShift] = useState(null); // live offset of the selection while moving it
@@ -81,7 +85,7 @@ export default function DrawLayer({ view, canvasRef, initial, onSave, onCancel }
 
   useEffect(() => {
     const onKey = (e) => {
-      if (e.target.closest?.('input, textarea')) return;
+      if (e.target.closest?.('input:not([type=range]), textarea')) return;
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
       if (e.key === 'Escape') {
@@ -95,6 +99,8 @@ export default function DrawLayer({ view, canvasRef, initial, onSave, onCancel }
       else if (k === 'p' || k === 'b') setTool('pen');
       else if (k === 'v') setTool('select');
       else if (k === 'e') setTool('eraser');
+      else if (e.key === '[') setSize((v) => Math.max(MIN_SIZE, Math.round(v / 1.25)));
+      else if (e.key === ']') setSize((v) => Math.min(MAX_SIZE, Math.max(v + 1, Math.round(v * 1.25))));
       else return;
       e.preventDefault();
       e.stopPropagation();
@@ -128,7 +134,7 @@ export default function DrawLayer({ view, canvasRef, initial, onSave, onCancel }
     const w = toWorld(e.clientX, e.clientY);
     const pr = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5;
     if (tool === 'pen') {
-      g.current = { type: 'pen', id: e.pointerId, stroke: { c: color, s: INK_SIZES[size], p: [w.x, w.y, pr] } };
+      g.current = { type: 'pen', id: e.pointerId, stroke: { c: color, s: size, p: [w.x, w.y, pr] } };
       setLive(g.current.stroke);
     } else if (tool === 'eraser') {
       g.current = { type: 'erase', id: e.pointerId, before: cur.current };
@@ -216,13 +222,30 @@ export default function DrawLayer({ view, canvasRef, initial, onSave, onCancel }
   const w8 = 1 / view.s;
 
   return (
-    <div className="draw-layer">
+    <div className={frame ? 'draw-layer on-image' : 'draw-layer'}>
       <svg className="draw-svg" style={{ cursor }} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} data-testid="draw-surface">
+        {frame && (
+          <path
+            className="draw-dim"
+            fillRule="evenodd"
+            d={`M-9999,-9999H99999V99999H-9999Z M${view.x + frame.x * view.s},${view.y + frame.y * view.s}h${frame.w * view.s}v${frame.h * view.s}h${-frame.w * view.s}Z`}
+          />
+        )}
         <g transform={`translate(${view.x} ${view.y}) scale(${view.s})`}>
-          {strokes.map((st, i) => (
-            <path key={i} d={strokePath(st)} fill={st.c} transform={shift && sel.has(i) ? `translate(${shift.x} ${shift.y})` : undefined} />
-          ))}
-          {live && <path d={strokePath(live)} fill={live.c} />}
+          {frame && (
+            <defs>
+              <clipPath id="draw-frame">
+                <rect x={frame.x} y={frame.y} width={frame.w} height={frame.h} />
+              </clipPath>
+            </defs>
+          )}
+          {frame && <rect className="draw-frame" x={frame.x} y={frame.y} width={frame.w} height={frame.h} strokeWidth={1.5 * w8} />}
+          <g clipPath={frame ? 'url(#draw-frame)' : undefined}>
+            {strokes.map((st, i) => (
+              <path key={i} d={strokePath(st)} fill={st.c} transform={shift && sel.has(i) ? `translate(${shift.x} ${shift.y})` : undefined} />
+            ))}
+            {live && <path d={strokePath(live)} fill={live.c} />}
+          </g>
           {selBounds && (
             <rect
               className="draw-sel"
@@ -275,24 +298,27 @@ export default function DrawLayer({ view, canvasRef, initial, onSave, onCancel }
           )}
         </div>
         <div className="draw-popwrap">
-          <button onClick={() => setPop(pop === 'size' ? null : 'size')} data-tip="Stroke size" aria-label="Stroke size">
-            <span className="draw-dot" style={{ width: 4 + size * 4, height: 4 + size * 4, background: color }} />
+          <button onClick={() => setPop(pop === 'size' ? null : 'size')} data-tip="Stroke size ([ and ])" aria-label="Stroke size">
+            <span className="draw-dot" style={{ width: Math.min(22, Math.max(3, size)), height: Math.min(22, Math.max(3, size)), background: color }} />
           </button>
           {pop === 'size' && (
-            <div className="draw-pop draw-sizes">
-              {INK_SIZES.map((s, i) => (
-                <button
-                  key={s}
-                  className={i === size ? 'on' : ''}
-                  onClick={() => {
-                    setSize(i);
-                    setPop(null);
-                  }}
-                  aria-label={'Stroke size ' + (i + 1)}
-                >
-                  <span className="draw-dot" style={{ width: 4 + i * 4, height: 4 + i * 4, background: color }} />
-                </button>
-              ))}
+            <div className="draw-pop draw-size-pop">
+              <div className="draw-size-preview">
+                <span className="draw-dot" style={{ width: Math.min(56, size * view.s), height: Math.min(56, size * view.s), background: color }} />
+              </div>
+              <input
+                type="range"
+                min={MIN_SIZE}
+                max={MAX_SIZE}
+                step="1"
+                value={size}
+                onChange={(e) => setSize(Number(e.target.value))}
+                // Releasing the slider resizes selected strokes too.
+                onPointerUp={() => sel.size && commit(cur.current.map((st, i) => (sel.has(i) ? { ...st, s: size } : st)))}
+                onKeyUp={() => sel.size && commit(cur.current.map((st, i) => (sel.has(i) ? { ...st, s: size } : st)))}
+                aria-label="Stroke size slider"
+              />
+              <span className="draw-size-num">{size}</span>
             </div>
           )}
         </div>
