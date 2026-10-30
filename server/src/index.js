@@ -406,6 +406,36 @@ const IMMUTABLE = { 'Cache-Control': 'private, max-age=31536000, immutable', 'X-
 
 app.get('/api/files/:id/info', (req, res) => res.json({ file: fileOr404(req.params.id) }));
 
+// For the CLI: a PNG sized for terminal image protocols (mode=png&w=px), or the image drawn
+// with truecolor half-blocks (mode=ansi&cols=n): each character is one pixel wide, two tall.
+app.get('/api/files/:id/render', async (req, res) => {
+  const f = fileOr404(req.params.id);
+  const src = fs.existsSync(thumbPath(f.id)) ? thumbPath(f.id) : displayPath(f);
+  if (!fs.existsSync(src)) throw new HttpError(404, 'File is missing on disk');
+  const image = () => sharp(src).rotate();
+  if (req.query.mode === 'png') {
+    const w = Math.min(2000, Math.max(16, Number(req.query.w) || 800));
+    return res.type('png').send(await image().resize(w, w, { fit: 'inside', withoutEnlargement: true }).png().toBuffer());
+  }
+  const cols = Math.min(400, Math.max(4, Number(req.query.cols) || 80));
+  const { data, info } = await image().resize({ width: cols }).flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const px = (x, y) => (y < info.height ? `${data[(y * info.width + x) * 3]};${data[(y * info.width + x) * 3 + 1]};${data[(y * info.width + x) * 3 + 2]}` : '255;255;255');
+  let out = '';
+  for (let y = 0; y < info.height; y += 2) {
+    let fg = '';
+    let bg = '';
+    for (let x = 0; x < info.width; x++) {
+      const top = px(x, y);
+      const bottom = px(x, y + 1);
+      if (top !== fg) out += `\x1b[38;2;${(fg = top)}m`;
+      if (bottom !== bg) out += `\x1b[48;2;${(bg = bottom)}m`;
+      out += '▀';
+    }
+    out += '\x1b[0m\n';
+  }
+  res.type('text/plain; charset=utf-8').send(out);
+});
+
 app.get('/files/:id', (req, res) => {
   const f = fileOr404(req.params.id);
   const original = req.query.original === '1' || !f.display_ext;
