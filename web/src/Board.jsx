@@ -213,13 +213,15 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     return toWorld(r.left + r.width / 2, r.top + r.height / 2);
   }, [toWorld]);
 
-  // Card rectangles in world units, measured from offsets (never on pan).
+  // Card rectangles in world units, measured from offsets (never on pan). Cards culled off
+  // screen keep their last size; while dragging, only the dragged cards are measured again.
   const measureFrame = useRef(0);
-  const measure = useCallback(() => {
+  const measure = useCallback((only) => {
     const world = worldRef.current;
     if (!world) return;
-    const m = new Map();
-    for (const el of world.querySelectorAll('[data-card-id]')) {
+    const m = new Map(rects.current);
+    const els = only ? [...only].map((id) => world.querySelector(`[data-card-id="${CSS.escape(id)}"]`)).filter(Boolean) : world.querySelectorAll('[data-card-id]');
+    for (const el of els) {
       let x = 0;
       let y = 0;
       let e = el;
@@ -230,19 +232,27 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       }
       m.set(el.dataset.cardId, { x, y, w: el.offsetWidth, h: el.offsetHeight });
     }
+    if (!only) for (const id of m.keys()) if (!S.current.cards[id]) m.delete(id);
     rects.current = m;
     setRectsVersion((v) => v + 1);
   }, []);
+  // Measured rectangle, or a guess for a card that was never on screen.
+  const rectOf = (c) => rects.current.get(c.id) || { x: c.x, y: c.y, w: c.w || DEFAULT_W[c.type], h: 200 };
   const scheduleMeasure = useCallback(() => {
     cancelAnimationFrame(measureFrame.current);
-    measureFrame.current = requestAnimationFrame(measure);
+    measureFrame.current = requestAnimationFrame(() => measure());
   }, [measure]);
-  useLayoutEffect(measure, [cards, measure]);
+  useLayoutEffect(() => {
+    const g = gesture.current;
+    measure(g?.type === 'drag' || g?.type === 'resize' ? new Set(g.ids || [g.id]) : null);
+  }, [cards, measure]);
+  const [canvasSize, setCanvasSize] = useState({ w: 1200, h: 800 });
   useEffect(() => {
-    const ro = new ResizeObserver(scheduleMeasure);
-    for (const el of worldRef.current.querySelectorAll('[data-card-id]')) ro.observe(el);
+    const el = canvasRef.current;
+    const ro = new ResizeObserver(() => setCanvasSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
     return () => ro.disconnect();
-  }, [cards, scheduleMeasure]);
+  }, []);
 
   // Jump to ?focus=<card> once it has been measured.
   useEffect(() => {
@@ -683,8 +693,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     const cs = S.current.cards;
     const rs = Object.values(cs)
       .filter((c) => !c.column_id || !cs[c.column_id])
-      .map((c) => rects.current.get(c.id))
-      .filter(Boolean);
+      .map(rectOf);
     if (!rs.length) return;
     const x1 = Math.min(...rs.map((r) => r.x));
     const y1 = Math.min(...rs.map((r) => r.y));
@@ -1030,8 +1039,8 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
           const next = new Set(g.base);
           for (const c of Object.values(S.current.cards)) {
             if (c.column_id && S.current.cards[c.column_id]) continue;
-            const r = rects.current.get(c.id);
-            if (r && r.x < z.x && r.x + r.w > a.x && r.y < z.y && r.y + r.h > a.y) next.add(c.id);
+            const r = rectOf(c);
+            if (r.x < z.x && r.x + r.w > a.x && r.y < z.y && r.y + r.h > a.y) next.add(c.id);
           }
           setSel(next);
         } else if (g.type === 'maybe-drag') {
@@ -1480,9 +1489,45 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     return { topCards, kidsOf };
   }, [cards]);
 
+  // Big boards render only cards near the screen. The window snaps to 600-screen-px tiles,
+  // so panning re-renders the card layer only when it crosses a tile edge.
+  const CULL_AFTER = 150;
+  const TILE = 600;
+  let cullKey = 'all';
+  if (topCards.length > CULL_AFTER) {
+    const tile = TILE / view.s;
+    const i0 = Math.floor(-view.x / view.s / tile) - 1;
+    const j0 = Math.floor(-view.y / view.s / tile) - 1;
+    const i1 = Math.ceil((canvasSize.w - view.x) / view.s / tile) + 1;
+    const j1 = Math.ceil((canvasSize.h - view.y) / view.s / tile) + 1;
+    cullKey = `${tile.toFixed(4)}:${i0}:${j0}:${i1}:${j1}`;
+  }
+  const shown = useMemo(() => {
+    if (cullKey === 'all') return topCards;
+    const [tile, i0, j0, i1, j1] = cullKey.split(':').map(Number);
+    const x0 = i0 * tile;
+    const y0 = j0 * tile;
+    const x1 = i1 * tile;
+    const y1 = j1 * tile;
+    return topCards.filter((c) => {
+      if (sel.has(c.id) || editing === c.id || dragIds.has(c.id)) return true;
+      const r = rects.current.get(c.id) || { x: c.x, y: c.y, w: c.w || DEFAULT_W[c.type], h: 320 };
+      return r.x < x1 && r.x + r.w > x0 && r.y < y1 && r.y + r.h > y0;
+    });
+  }, [topCards, cullKey, sel, editing, dragIds]);
+
+  // Far out, images load the 256 px mini instead of the 800 px thumbnail.
+  const lowRes = view.s < 0.45;
+
+  useEffect(() => {
+    const ro = new ResizeObserver(scheduleMeasure);
+    for (const el of worldRef.current.querySelectorAll('[data-card-id]')) ro.observe(el);
+    return () => ro.disconnect();
+  }, [shown, kidsOf, scheduleMeasure]);
+
   const cardLayer = useMemo(
     () =>
-      topCards.map((c) =>
+      shown.map((c) =>
         c.type === 'column' ? (
           <CardView
             key={c.id}
@@ -1499,6 +1544,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             dropIndex={hint?.columnId === c.id ? hint.index : null}
             cut={cutIds.has(c.id)}
             cutIds={cutIds}
+            lowRes={lowRes}
           />
         ) : (
           <CardView
@@ -1510,10 +1556,11 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             cut={cutIds.has(c.id)}
             actions={actions}
             file={files[c.data.fileId]}
+            lowRes={lowRes}
           />
         )
       ),
-    [topCards, kidsOf, sel, editing, dragIds, cutIds, actions, files, hint]
+    [shown, kidsOf, sel, editing, dragIds, cutIds, actions, files, hint, lowRes]
   );
 
   const arrowLayer = useMemo(() => {

@@ -2,6 +2,7 @@
 // Uses playwright-core with an installed Edge/Chrome (no browser download):
 //   PW=<path to node_modules/playwright-core> node e2e/step2.mjs
 import { createRequire } from 'node:module';
+import zlib from 'node:zlib';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW || 'playwright-core');
@@ -61,6 +62,66 @@ export async function api(method, path, body) {
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Solid-colour PNG of any size, so tests need no image files.
+export function solidPng(w, h, [r, g, b]) {
+  const table = [...Array(256)].map((_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf) => {
+    let c = 0xffffffff;
+    for (const x of buf) c = table[(c ^ x) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const td = Buffer.concat([Buffer.from(type), data]);
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const c = Buffer.alloc(4);
+    c.writeUInt32BE(crc(td));
+    return Buffer.concat([len, td, c]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const row = Buffer.alloc(1 + w * 3);
+  for (let x = 0; x < w; x++) row.set([r, g, b], 1 + x * 3);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.concat(Array(h).fill(row)))), chunk('IEND', Buffer.alloc(0))]);
+}
+
+// Random-noise PNG: decodes and compresses like a real photo, unlike a flat colour.
+export function noisePng(w, h, seed = 1) {
+  let s = seed >>> 0 || 1;
+  const rand = () => ((s ^= s << 13), (s ^= s >>> 17), (s ^= s << 5), s >>> 0);
+  const pixels = Buffer.alloc(w * h * 3);
+  for (let i = 0; i < pixels.length; i++) pixels[i] = rand() & 255;
+  const png = solidPng(w, h, [0, 0, 0]);
+  // Rebuild the IDAT from the noise rows (filter byte 0 per row).
+  const rows = [];
+  for (let y = 0; y < h; y++) rows.push(Buffer.from([0]), pixels.subarray(y * w * 3, (y + 1) * w * 3));
+  const idat = zlib.deflateSync(Buffer.concat(rows), { level: 1 });
+  const head = png.subarray(0, 8 + 25); // signature + IHDR chunk
+  const chunk = (type, data) => {
+    const table = [...Array(256)].map((_, n) => {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      return c >>> 0;
+    });
+    const td = Buffer.concat([Buffer.from(type), data]);
+    let c = 0xffffffff;
+    for (const x of td) c = table[(c ^ x) & 0xff] ^ (c >>> 8);
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE((c ^ 0xffffffff) >>> 0);
+    return Buffer.concat([len, td, crc]);
+  };
+  return Buffer.concat([head, chunk('IDAT', idat), chunk('IEND', Buffer.alloc(0))]);
+}
 
 // 1×1 PNG, enough for upload tests.
 export const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');

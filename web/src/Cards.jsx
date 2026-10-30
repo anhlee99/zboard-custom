@@ -153,7 +153,7 @@ function TodoBody({ card, editing, actions }) {
   );
 }
 
-function ImageBody({ card, editing, file, actions }) {
+function ImageBody({ card, editing, file, actions, lowRes }) {
   const fileId = card.data.fileId;
   useEffect(() => {
     if (fileId && !file) actions.ensureFile(fileId);
@@ -162,7 +162,7 @@ function ImageBody({ card, editing, file, actions }) {
   return (
     <>
       <div className="img-wrap" style={{ aspectRatio: ratio }}>
-        {fileId && <img src={`/files/${fileId}/thumb`} alt={card.data.caption || ''} draggable={false} loading="lazy" decoding="async" />}
+        {fileId && <img src={`/files/${fileId}/${lowRes ? 'mini' : 'thumb'}`} alt={card.data.caption || ''} draggable={false} loading="lazy" decoding="async" />}
       </div>
       {editing ? (
         <input
@@ -183,7 +183,7 @@ function ImageBody({ card, editing, file, actions }) {
   );
 }
 
-function LinkBody({ card, editing, actions }) {
+function LinkBody({ card, editing, actions, lowRes }) {
   const d = card.data;
   if (!d.url || editing) {
     return (
@@ -212,7 +212,7 @@ function LinkBody({ card, editing, actions }) {
   }
   return (
     <div className="link-body">
-      {d.image && <img className="link-img" src={`/files/${d.image}/thumb`} alt="" draggable={false} loading="lazy" decoding="async" />}
+      {d.image && <img className="link-img" src={`/files/${d.image}/${lowRes ? 'mini' : 'thumb'}`} alt="" draggable={false} loading="lazy" decoding="async" />}
       <div className="link-meta">
         <div className="link-title">{d.loading ? 'Fetching preview…' : d.title || d.url}</div>
         {d.description && <div className="link-desc">{d.description}</div>}
@@ -249,7 +249,7 @@ function BoardBody({ card, editing, actions }) {
   );
 }
 
-function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropIndex, dragIds, cutIds }) {
+function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropIndex, dragIds, cutIds, lowRes }) {
   return (
     <>
       <div className="col-head">
@@ -283,6 +283,7 @@ function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropI
               actions={actions}
               dragging={dragIds.has(k.id)}
               cut={cutIds?.has(k.id)}
+              lowRes={lowRes}
             />
           </Fragment>
         ))}

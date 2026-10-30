@@ -5,43 +5,12 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import zlib from 'node:zlib';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { api, BASE, check, done, PASSWORD, sleep } from './lib.mjs';
+import { api, BASE, check, done, PASSWORD, sleep, solidPng as png } from './lib.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.PW || 'playwright-core');
 const SITE = `http://localhost:${process.env.SITE_PORT || 4600}`;
-
-// Solid-colour PNG, so the test site needs no image files.
-function png(w, h, [r, g, b]) {
-  const table = [...Array(256)].map((_, n) => {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    return c >>> 0;
-  });
-  const crc = (buf) => {
-    let c = 0xffffffff;
-    for (const x of buf) c = table[(c ^ x) & 0xff] ^ (c >>> 8);
-    return (c ^ 0xffffffff) >>> 0;
-  };
-  const chunk = (type, data) => {
-    const td = Buffer.concat([Buffer.from(type), data]);
-    const len = Buffer.alloc(4);
-    len.writeUInt32BE(data.length);
-    const c = Buffer.alloc(4);
-    c.writeUInt32BE(crc(td));
-    return Buffer.concat([len, td, c]);
-  };
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(w, 0);
-  ihdr.writeUInt32BE(h, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 2;
-  const row = Buffer.alloc(1 + w * 3);
-  for (let x = 0; x < w; x++) row.set([r, g, b], 1 + x * 3);
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.concat(Array(h).fill(row)))), chunk('IEND', Buffer.alloc(0))]);
-}
 const COLORS = [[220, 60, 60], [60, 160, 80], [60, 100, 220], [230, 180, 40], [150, 70, 200]];
 const site = http
   .createServer((req, res) => {
@@ -202,6 +171,7 @@ await pop2.close();
 // --- menu: extension setup and zip ---
 await zb.click('[aria-label="Menu"]');
 await zb.locator('button', { hasText: 'Set up ZBoard Clipper' }).click();
+await zb.waitForFunction(() => document.querySelectorAll('.copy-field input')[1]?.value.length > 20, null, { timeout: 5000 }).catch(() => {});
 const tokenShown = await zb.locator('.copy-field input').nth(1).inputValue();
 check((await zb.locator('.copy-field input').first().inputValue()) === BASE && tokenShown.length > 20 && tokenShown !== token, 'menu shows the server address and the current token');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'zb-zip-'));
