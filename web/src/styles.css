@@ -268,9 +268,7 @@ input {
   width: 0;
   height: 0;
   transform-origin: 0 0;
-}
-.world.fast {
-  will-change: transform;
+  will-change: transform; /* see Board.jsx: kept as a GPU layer so panning does not repaint */
 }
 .empty-hint {
   position: absolute;

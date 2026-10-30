@@ -292,18 +292,22 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     measure(g?.type === 'drag' || g?.type === 'resize' ? new Set(g.ids || [g.id]) : null);
   }, [cards, measure]);
 
-  // While the view is moving, the board content is its own GPU layer, so panning moves pixels
-  // instead of repainting every visible card (that cost grows with zoom). Shortly after the
-  // view stops it goes back to normal, so zoomed-in images are redrawn sharp.
-  const fastTimer = useRef(0);
-  useLayoutEffect(() => {
+  // The board content is always its own GPU layer (.world has will-change: transform), so panning
+  // just moves pixels instead of repainting every visible card, which at high zoom costs ~85 ms a
+  // frame. Building that layer takes 150-250 ms, so it is kept rather than made per pan. A kept
+  // layer stays drawn at the zoom it was made at, so once a zoom has settled, drop and re-add it
+  // for a frame to have it redrawn sharp at the new scale.
+  const redrawTimer = useRef(0);
+  useEffect(() => {
     const el = worldRef.current;
     if (!el) return;
-    el.classList.add('fast');
-    clearTimeout(fastTimer.current);
-    fastTimer.current = setTimeout(() => el.classList.remove('fast'), 250);
-  }, [view]);
-  useEffect(() => () => clearTimeout(fastTimer.current), []);
+    clearTimeout(redrawTimer.current);
+    redrawTimer.current = setTimeout(() => {
+      el.style.willChange = 'auto';
+      requestAnimationFrame(() => requestAnimationFrame(() => (el.style.willChange = '')));
+    }, 300);
+    return () => clearTimeout(redrawTimer.current);
+  }, [view.s]);
   const [canvasSize, setCanvasSize] = useState({ w: 1200, h: 800 });
   useEffect(() => {
     const el = canvasRef.current;
