@@ -154,31 +154,48 @@ function TodoBody({ card, editing, actions }) {
   );
 }
 
-function ImageBody({ card, editing, file, actions, lowRes }) {
-  const fileId = card.data.fileId;
+function ImageBody({ card, editing, selected, inColumn, file, actions, lowRes }) {
+  const d = card.data;
+  const fileId = d.fileId;
   useEffect(() => {
     if (fileId && !file) actions.ensureFile(fileId);
   }, [fileId, file, actions]);
   const ratio = file?.width && file?.height ? `${file.width} / ${file.height}` : undefined;
+  const site = d.source_url ? hostOf(d.source_url) : '';
   return (
     <>
       <div className="img-wrap" style={{ aspectRatio: ratio }}>
-        {fileId && <img src={`/files/${fileId}/${lowRes ? 'mini' : 'thumb'}`} alt={card.data.caption || ''} draggable={false} loading="lazy" decoding="async" />}
+        {fileId && <img src={`/files/${fileId}/${lowRes ? 'mini' : 'thumb'}`} alt={d.caption || d.alt || file?.name || ''} title={d.alt || undefined} draggable={false} loading="lazy" decoding="async" />}
       </div>
       {editing ? (
         <input
           className="caption-input"
           autoFocus
-          placeholder="Add a caption"
-          defaultValue={card.data.caption || ''}
+          placeholder={d.alt ? `Caption (page said: ${d.alt.slice(0, 60)})` : 'Add a caption (searchable)'}
+          defaultValue={d.caption || ''}
           onBlur={(e) => {
-            if (e.target.value !== (card.data.caption || '')) actions.saveData(card.id, { caption: e.target.value });
+            if (e.target.value !== (d.caption || '')) actions.saveData(card.id, { caption: e.target.value });
             actions.stopEdit(card.id);
           }}
           onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
         />
+      ) : d.caption ? (
+        <div className="caption">{d.caption}</div>
       ) : (
-        card.data.caption && <div className="caption">{card.data.caption}</div>
+        selected &&
+        !inColumn && (
+          <button className="caption-add" onClick={() => actions.editCard(card.id)}>
+            Add a caption
+          </button>
+        )
+      )}
+      {site && (
+        <div className="img-source">
+          From{' '}
+          <a href={d.source_url} target="_blank" rel="noopener noreferrer" title={d.source_title || d.source_url} draggable={false}>
+            {site}
+          </a>
+        </div>
       )}
     </>
   );

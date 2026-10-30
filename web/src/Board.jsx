@@ -43,6 +43,15 @@ const TOOLS = [
 ];
 
 // Where the edge of a w×h box centred at (cx, cy) meets the line towards (tx, ty).
+// Arrow look from its data: heads at start/end, dashed, weight 1-3 (thin, normal, thick).
+const ARROW_WEIGHTS = { 1: 1.25, 2: 2, 3: 3.5 };
+const ARROW_COLORS = [null, '#23221f', '#ef4444', '#f2783c', '#f6c445', '#6dd36d', '#38bdb0', '#4f7cf7', '#a26bf0', '#ec6fcf'];
+function arrowStyle(a) {
+  const d = a.data || {};
+  const weight = [1, 2, 3].includes(d.weight) ? d.weight : 2;
+  return { start: !!d.start, end: d.end !== false, dashed: !!d.dashed, weight, width: ARROW_WEIGHTS[weight] };
+}
+
 function edgePoint(r, tx, ty) {
   const cx = r.x + r.w / 2;
   const cy = r.y + r.h / 2;
@@ -61,6 +70,12 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   const [view, setView] = useState(() => loadView(boardId) || { x: 80, y: 40, s: 1 });
   const [sel, setSel] = useState(EMPTY);
   const [selArrow, setSelArrow] = useState(null);
+  const [arrowLabel, setArrowLabel] = useState(false); // label box open in the arrow bar
+  const [arrowColorOpen, setArrowColorOpen] = useState(false);
+  useEffect(() => {
+    setArrowLabel(false);
+    setArrowColorOpen(false);
+  }, [selArrow]);
   const [editing, setEditing] = useState(null);
   const [box, setBox] = useState(null);
   const [hint, setHint] = useState(null);
@@ -440,10 +455,10 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   );
 
   const createArrow = useCallback(
-    async (from, to, { record = true, id = uid(), label = null } = {}) => {
-      setArrows((p) => ({ ...p, [id]: { id, board_id: boardId, from_card: from, to_card: to, label } }));
+    async (from, to, { record = true, id = uid(), label = null, color = null, data = {} } = {}) => {
+      setArrows((p) => ({ ...p, [id]: { id, board_id: boardId, from_card: from, to_card: to, label, color, data } }));
       try {
-        const r = await api('POST', `/api/boards/${encodeURIComponent(boardId)}/arrows`, { id, from_card: from, to_card: to, label });
+        const r = await api('POST', `/api/boards/${encodeURIComponent(boardId)}/arrows`, { id, from_card: from, to_card: to, label, color, data });
         applyArrows([r.arrow]);
         if (record) pushUndo(() => deleteArrowRef.current(id, { record: false }));
       } catch (e) {
@@ -461,7 +476,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       setSelArrow(null);
       try {
         await api('DELETE', `/api/arrows/${id}`);
-        if (record && a) pushUndo(() => createArrow(a.from_card, a.to_card, { record: false, id: a.id, label: a.label }));
+        if (record && a) pushUndo(() => createArrow(a.from_card, a.to_card, { record: false, id: a.id, label: a.label, color: a.color, data: a.data }));
       } catch (e) {
         notify(e);
       }
@@ -470,6 +485,20 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   );
   const deleteArrowRef = useRef(deleteArrow);
   deleteArrowRef.current = deleteArrow;
+
+  // Label, colour and style (data: start/end heads, dashed, weight). Undo restores all of them.
+  const patchArrow = useCallback(
+    function patchArrow(id, patch, { record = true } = {}) {
+      const a = S.current.arrows[id];
+      if (!a) return;
+      const st = arrowStyle(a);
+      const before = { label: a.label ?? null, color: a.color ?? null, data: { start: st.start, end: st.end, dashed: st.dashed, weight: st.weight } };
+      applyArrows([{ ...a, ...patch, data: patch.data ? { ...(a.data || {}), ...patch.data } : a.data }]);
+      if (record) pushUndo(() => patchArrow(id, before, { record: false }));
+      api('PATCH', `/api/arrows/${id}`, patch).catch(notify);
+    },
+    [applyArrows, pushUndo, notify]
+  );
 
   const undo = useCallback(async () => {
     const fn = undoStack.current.pop();
@@ -548,11 +577,11 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   );
 
   const addImageUrl = useCallback(
-    async (url, at) => {
+    async (url, at, extra = {}) => {
       try {
         const { file } = await api('POST', '/api/upload-url', { url });
         setFiles((f) => ({ ...f, [file.id]: file }));
-        await createCards([{ type: 'image', x: at.x, y: at.y, data: { fileId: file.id, caption: '' } }]);
+        await createCards([{ type: 'image', x: at.x, y: at.y, data: { fileId: file.id, caption: '', ...extra } }]);
       } catch (e) {
         notify(e);
       }
@@ -654,6 +683,10 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         }
       },
       setCover,
+      editCard: (id) => {
+        setSel(new Set([id]));
+        setEditing(id);
+      },
       ensureFile: async (fileId) => {
         if (S.current.files[fileId]) return;
         const r = await api('GET', `/api/files/${fileId}/info`).catch(() => null);
@@ -850,7 +883,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       const made = await createCards(list);
       if (!made.length) return;
       for (const a of clip.arrows || []) {
-        if (ids.has(a.from_card) && ids.has(a.to_card)) createArrow(ids.get(a.from_card), ids.get(a.to_card), { record: false, label: a.label });
+        if (ids.has(a.from_card) && ids.has(a.to_card)) createArrow(ids.get(a.from_card), ids.get(a.to_card), { record: false, label: a.label, color: a.color, data: a.data });
       }
       setSel(new Set(top.map((c) => ids.get(c.id))));
     },
@@ -1356,7 +1389,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       if (el) {
         const c = S.current.cards[el.dataset.cardId];
         if (!c || S.current.editing === c.id) return;
-        if (e.target.closest('input, textarea, button')) return;
+        if (e.target.closest('input, textarea, button, a')) return;
         if (c.type === 'board' && e.target.closest('.board-title')) startEdit(c.id); // double-click the name to rename
         else if (c.type === 'board' || c.type === 'image') openCard(c);
         else if (c.type === 'link' && c.data.url) openCard(c);
@@ -1365,12 +1398,8 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       }
       const ar = e.target.closest('[data-arrow-id]');
       if (ar) {
-        const a = S.current.arrows[ar.dataset.arrowId];
-        const label = window.prompt('Arrow label', a?.label || '');
-        if (label !== null && a) {
-          applyArrows([{ ...a, label }]);
-          api('PATCH', `/api/arrows/${a.id}`, { label }).catch(notify);
-        }
+        setSelArrow(ar.dataset.arrowId);
+        setArrowLabel(true);
       }
     },
     [openCard, startEdit, applyArrows, notify]
@@ -1514,8 +1543,13 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     if (clipId) return placeClip(clipId, { x: at.x - 40, y: at.y - 30 });
     if (dt.files.length) return addImages(dt.files, at);
     const html = dt.getData('text/html');
-    const img = html && new DOMParser().parseFromString(html, 'text/html').querySelector('img')?.getAttribute('src');
-    if (img && /^https?:/i.test(img)) return addImageUrl(img, at);
+    const imgEl = html && new DOMParser().parseFromString(html, 'text/html').querySelector('img');
+    const img = imgEl?.getAttribute('src');
+    if (img && /^https?:/i.test(img)) {
+      // Keep the alt text, and the page link when the image was inside one.
+      const href = imgEl.closest('a')?.getAttribute('href');
+      return addImageUrl(img, at, { alt: imgEl.getAttribute('alt') || null, source_url: href && /^https?:/i.test(href) ? href : null });
+    }
     const uri = (dt.getData('text/uri-list') || '').split('\n').find((l) => l && !l.startsWith('#'));
     const text = uri || dt.getData('text/plain');
     if (!text) return;
@@ -1625,7 +1659,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       if (!r1 || !r2) continue;
       const p1 = edgePoint(r1, r2.x + r2.w / 2, r2.y + r2.h / 2);
       const p2 = edgePoint(r2, r1.x + r1.w / 2, r1.y + r1.h / 2);
-      items.push({ a, p1, p2 });
+      items.push({ a, p1, p2, st: arrowStyle(a) });
     }
     let temp = null;
     if (tempArrow) {
@@ -1639,10 +1673,21 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             <path d="M0 0L10 5L0 10z" fill="context-stroke" />
           </marker>
         </defs>
-        {items.map(({ a, p1, p2 }) => (
+        {items.map(({ a, p1, p2, st }) => (
           <g key={a.id} data-arrow-id={a.id} className={selArrow === a.id ? 'arrow selected' : 'arrow'}>
             <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} className="arrow-hit" />
-            <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} className="arrow-line" markerEnd="url(#zb-head)" />
+            {selArrow === a.id && <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} className="arrow-glow" style={{ strokeWidth: st.width + 8 }} />}
+            <line
+              x1={p1.x}
+              y1={p1.y}
+              x2={p2.x}
+              y2={p2.y}
+              className="arrow-line"
+              style={{ stroke: a.color || undefined, strokeWidth: st.width }}
+              strokeDasharray={st.dashed ? `${st.width * 4} ${st.width * 3}` : undefined}
+              markerEnd={st.end ? 'url(#zb-head)' : undefined}
+              markerStart={st.start ? 'url(#zb-head)' : undefined}
+            />
             {a.label && (
               <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 6} className="arrow-label" textAnchor="middle">
                 {a.label}
@@ -1654,6 +1699,22 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       </svg>
     );
   }, [arrows, rectsVersion, tempArrow, selArrow]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Arrow bar floats above the selected arrow's middle.
+  const selA = selArrow ? arrows[selArrow] : null;
+  let arrowBar = null;
+  if (selA && rects.current.get(selA.from_card) && rects.current.get(selA.to_card)) {
+    const r1 = rects.current.get(selA.from_card);
+    const r2 = rects.current.get(selA.to_card);
+    const p1 = edgePoint(r1, r2.x + r2.w / 2, r2.y + r2.h / 2);
+    const p2 = edgePoint(r2, r1.x + r1.w / 2, r1.y + r1.h / 2);
+    arrowBar = {
+      a: selA,
+      st: arrowStyle(selA),
+      x: clamp(((p1.x + p2.x) / 2) * view.s + view.x, 160, Math.max(160, canvasSize.w - 160)),
+      y: Math.max(56, ((p1.y + p2.y) / 2) * view.s + view.y - 14),
+    };
+  }
 
   // Cover picker sits under its board card, kept on screen.
   const coverCard = coverFor && cards[coverFor]?.child?.id ? cards[coverFor] : null;
@@ -1776,6 +1837,74 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             <button className="icon-btn danger" onClick={() => deleteCards([...sel])} data-tip="Delete (Del)" aria-label="Delete">
               <Icon name="trash" size={18} />
             </button>
+          </div>
+        )}
+
+        {arrowBar && (
+          <div className="float-bar arrow-bar" style={{ left: arrowBar.x, top: arrowBar.y }} onPointerDown={(e) => e.stopPropagation()}>
+            <div className="float-color">
+              <button className="icon-btn" onClick={() => setArrowColorOpen((o) => !o)} data-tip="Colour" aria-label="Arrow colour">
+                <span className="arrow-color-dot" style={{ background: arrowBar.a.color || '#8a867c' }} />
+              </button>
+              {arrowColorOpen && (
+                <div className="color-pop">
+                  {ARROW_COLORS.map((c) => (
+                    <button
+                      key={c || 'default'}
+                      className={'swatch' + ((arrowBar.a.color || null) === c ? ' on' : '')}
+                      style={{ background: c || '#8a867c' }}
+                      onClick={() => {
+                        patchArrow(arrowBar.a.id, { color: c });
+                        setArrowColorOpen(false);
+                      }}
+                      data-tip={c ? c : 'Default grey'}
+                      aria-label={'Arrow colour ' + (c || 'default')}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+            <button className={'icon-btn' + (arrowBar.st.start ? ' on' : '')} onClick={() => patchArrow(arrowBar.a.id, { data: { start: !arrowBar.st.start } })} data-tip="Arrowhead at start" aria-label="Start arrowhead" aria-pressed={arrowBar.st.start}>
+              <Icon name="arrowStart" size={18} />
+            </button>
+            <button className={'icon-btn' + (arrowBar.st.end ? ' on' : '')} onClick={() => patchArrow(arrowBar.a.id, { data: { end: !arrowBar.st.end } })} data-tip="Arrowhead at end" aria-label="End arrowhead" aria-pressed={arrowBar.st.end}>
+              <Icon name="arrowEnd" size={18} />
+            </button>
+            <button className={'icon-btn' + (arrowLabel ? ' on' : '')} onClick={() => setArrowLabel((o) => !o)} data-tip="Label (or double-click the arrow)" aria-label="Label">
+              <Icon name="label" size={18} />
+            </button>
+            <button className={'icon-btn' + (arrowBar.st.dashed ? ' on' : '')} onClick={() => patchArrow(arrowBar.a.id, { data: { dashed: !arrowBar.st.dashed } })} data-tip="Dashed" aria-label="Dashed" aria-pressed={arrowBar.st.dashed}>
+              <Icon name="dashed" size={18} />
+            </button>
+            <button className="icon-btn" onClick={() => patchArrow(arrowBar.a.id, { data: { weight: (arrowBar.st.weight % 3) + 1 } })} data-tip={`Weight: ${['thin', 'normal', 'thick'][arrowBar.st.weight - 1]} (click to change)`} aria-label="Weight">
+              <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+                <line x1="2" y1="9" x2="16" y2="9" stroke="currentColor" strokeWidth={arrowBar.st.width + 0.5} strokeLinecap="round" />
+              </svg>
+            </button>
+            <button className="icon-btn danger" onClick={() => deleteArrow(arrowBar.a.id)} data-tip="Delete (Del)" aria-label="Delete arrow">
+              <Icon name="trash" size={18} />
+            </button>
+            {arrowLabel && (
+              <input
+                className="arrow-label-input"
+                autoFocus
+                placeholder="Label"
+                defaultValue={arrowBar.a.label || ''}
+                aria-label="Arrow label"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.target.blur();
+                  if (e.key === 'Escape') {
+                    e.target.value = arrowBar.a.label || '';
+                    e.target.blur();
+                  }
+                }}
+                onBlur={(e) => {
+                  const label = e.target.value.trim() || null;
+                  if (label !== (arrowBar.a.label || null)) patchArrow(arrowBar.a.id, { label });
+                  setArrowLabel(false);
+                }}
+              />
+            )}
           </div>
         )}
 

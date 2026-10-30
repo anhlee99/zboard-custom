@@ -441,7 +441,7 @@ input {
   background: var(--c-grey);
   min-height: 40px;
 }
-.card-image:not(:has(.caption, .caption-input)) .img-wrap {
+.card-image:not(:has(.caption, .caption-input, .caption-add, .img-source)) .img-wrap {
   border-radius: var(--radius);
 }
 .img-wrap img {
@@ -661,9 +661,10 @@ input {
   pointer-events: stroke;
   cursor: pointer;
 }
-.arrow.selected .arrow-line {
-  stroke: var(--accent);
-  stroke-width: 3;
+.arrow-glow {
+  stroke: var(--accent-soft);
+  stroke-linecap: round;
+  fill: none;
 }
 .arrow-label {
   font-size: 13px;
@@ -1686,4 +1687,71 @@ kbd {
 .canvas.gesturing iframe,
 .canvas.panning iframe {
   pointer-events: none;
+}
+
+/* ---------- image captions and source ---------- */
+.caption {
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.caption-add {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-2);
+  opacity: 0.8;
+  cursor: text;
+}
+.caption-add:hover {
+  opacity: 1;
+  background: var(--bg);
+}
+.img-source {
+  padding: 8px 12px 10px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.caption + .img-source,
+.caption-input + .img-source,
+.caption-add + .img-source {
+  padding-top: 0;
+}
+.img-source a {
+  color: #e2553f;
+  text-decoration: underline;
+}
+.card-image.cutout .caption-add,
+.card-image.cutout .img-source {
+  background: transparent;
+}
+
+/* ---------- arrow bar ---------- */
+.arrow-bar {
+  flex-wrap: wrap;
+}
+.arrow-color-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.arrow-bar .swatch.on {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.arrow-label-input {
+  flex-basis: 100%;
+  margin-top: 4px;
+  padding: 5px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font: inherit;
+  outline: none;
 }

@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS drive_files (
   uploaded_at INTEGER NOT NULL
 );
 `;
-const SEARCH_VERSION = '1';
+const SEARCH_VERSION = '2'; // bump to re-index everything on the next start
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 const decodeEntities = (s) =>
@@ -112,6 +112,14 @@ const stripHtml = (html) =>
     .replace(/\s*\n\s*/g, '\n')
     .trim();
 
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+};
+
 // Searchable text of a card. Board cards are found through their board's title.
 export function cardText(c) {
   const d = c.data || {};
@@ -121,7 +129,7 @@ export function cardText(c) {
     case 'todo':
       return [d.title, ...(d.items || []).map((i) => i.text)].filter(Boolean).join('\n');
     case 'image':
-      return d.caption || '';
+      return [d.caption, d.alt, d.source_title, hostOf(d.source_url)].filter(Boolean).join('\n');
     case 'link':
       return [d.title, d.description, d.url].filter(Boolean).join('\n');
     case 'column':
@@ -260,7 +268,9 @@ export function createStore(file) {
     db.prepare('DELETE FROM card_tags WHERE card_id = ?').run(id);
     const c = getCard(id);
     if (!c) return;
-    const text = cardText(c);
+    // Images are also found by their file name.
+    const name = c.type === 'image' && c.data?.fileId ? db.prepare('SELECT name FROM files WHERE id = ?').get(c.data.fileId)?.name : null;
+    const text = [cardText(c), name].filter(Boolean).join('\n');
     if (text) db.prepare("INSERT INTO search_fts (ref, board_id, kind, text) VALUES (?, ?, 'card', ?)").run(id, c.board_id, text);
     for (const tag of tagsOf(c)) db.prepare('INSERT OR IGNORE INTO card_tags (card_id, board_id, tag) VALUES (?, ?, ?)').run(id, c.board_id, tag);
   }

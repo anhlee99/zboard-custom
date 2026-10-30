@@ -62,7 +62,7 @@ function fileName(src, type) {
 
 // The browser fetches the image first (that keeps the site's login cookies);
 // if it can't, the server downloads it.
-export async function saveImage({ src, board, page }) {
+export async function saveImage({ src, board, page, alt }) {
   if (!src.startsWith('blob:')) {
     try {
       const r = await fetch(src, { credentials: 'include' });
@@ -73,6 +73,7 @@ export async function saveImage({ src, board, page }) {
         form.append('src_url', src.startsWith('data:') ? '' : src);
         form.append('page_url', page?.url || '');
         form.append('page_title', page?.title || '');
+        form.append('alt', alt || '');
         form.append('file', blob, fileName(src, blob.type || 'image/png'));
         return (await call('/api/clips', { method: 'POST', form })).clip;
       }
@@ -81,7 +82,7 @@ export async function saveImage({ src, board, page }) {
     }
   }
   if (!/^https?:/i.test(src)) throw new ZBError("This image can't be saved: it only exists inside the page.");
-  return (await call('/api/clips', { method: 'POST', json: { board_id: board, kind: 'image', src_url: src, page_url: page?.url, page_title: page?.title } })).clip;
+  return (await call('/api/clips', { method: 'POST', json: { board_id: board, kind: 'image', src_url: src, alt, page_url: page?.url, page_title: page?.title } })).clip;
 }
 
 export const saveLink = async ({ url, title, board, page }) =>

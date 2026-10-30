@@ -82,6 +82,24 @@ async function report(tabId, ok, message) {
   chrome.scripting.executeScript({ target: { tabId }, func: toast, args: [message, ok] }).catch(() => {});
 }
 
+// Alt text of the right-clicked image, read from the page (empty if it can't be found).
+async function altOf(tabId, frameId, src) {
+  if (!tabId) return '';
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId || 0] },
+      args: [src],
+      func: (src) => {
+        const img = [...document.images].find((i) => i.currentSrc === src || i.src === src);
+        return (img?.alt || img?.title || '').trim().slice(0, 500);
+      },
+    });
+    return res?.result || '';
+  } catch {
+    return '';
+  }
+}
+
 async function onMenuClick(info, tab) {
   const id = String(info.menuItemId);
   if (id === 'setup') return chrome.tabs.create({ url: chrome.runtime.getURL('popup.html?page=1') });
@@ -90,7 +108,7 @@ async function onMenuClick(info, tab) {
   const board = m[1];
   const page = { url: info.pageUrl || tab?.url, title: tab?.title };
   try {
-    if (info.mediaType === 'image' && info.srcUrl) await saveImage({ src: info.srcUrl, board, page });
+    if (info.mediaType === 'image' && info.srcUrl) await saveImage({ src: info.srcUrl, board, page, alt: await altOf(tab?.id, info.frameId, info.srcUrl) });
     else if (info.linkUrl) await saveLink({ url: info.linkUrl, title: info.selectionText, board, page });
     else if (info.selectionText) await saveText({ text: info.selectionText, board, page });
     else await saveLink({ url: page.url, title: page.title, board, page });
@@ -106,9 +124,10 @@ Object.assign(globalThis.zboard, { rebuildMenus, onMenuClick });
 async function saveImages({ items, board, page, tabId }) {
   let saved = 0;
   let error = null;
-  for (const src of items) {
+  for (const item of items) {
+    const { src, alt } = typeof item === 'string' ? { src: item, alt: '' } : item;
     try {
-      await saveImage({ src, board, page });
+      await saveImage({ src, board, page, alt });
       saved++;
     } catch (e) {
       error = e;

@@ -510,6 +510,7 @@ app.post('/api/clips', upload.single('file'), async (req, res) => {
   const boardId = b.board_id || 'root';
   if (!store.getBoard(boardId)) throw new HttpError(404, 'That board no longer exists. Pick another board in the extension.');
   const source = { page_url: str(b.page_url), page_title: str(b.page_title) };
+  const alt = str(b.alt)?.slice(0, 500) || null; // the image's alt text on the page
   let clip;
   if (req.file) {
     let file;
@@ -518,10 +519,10 @@ app.post('/api/clips', upload.single('file'), async (req, res) => {
     } finally {
       fs.rmSync(req.file.path, { force: true });
     }
-    clip = store.createClip(boardId, 'image', { fileId: file.id, src_url: str(b.src_url), ...source });
+    clip = store.createClip(boardId, 'image', { fileId: file.id, src_url: str(b.src_url), alt, ...source });
   } else if (b.kind === 'image') {
     const file = await storeRemoteImage(httpUrl(b.src_url).href);
-    clip = store.createClip(boardId, 'image', { fileId: file.id, src_url: b.src_url, ...source });
+    clip = store.createClip(boardId, 'image', { fileId: file.id, src_url: b.src_url, alt, ...source });
   } else if (b.kind === 'link') {
     const url = httpUrl(b.url).href;
     clip = store.createClip(boardId, 'link', { url, title: str(b.title) || url, ...source });
@@ -544,7 +545,8 @@ app.post('/api/clips', upload.single('file'), async (req, res) => {
 
 function clipToCard(clip) {
   const d = clip.data;
-  if (clip.kind === 'image') return { type: 'image', data: { fileId: d.fileId, caption: '' } };
+  // Images keep the page they came from (shown as "From site") and the page's alt text.
+  if (clip.kind === 'image') return { type: 'image', data: { fileId: d.fileId, caption: '', alt: d.alt || null, source_url: d.page_url || null, source_title: d.page_title || null } };
   if (clip.kind === 'link') return { type: 'link', data: { url: d.url, title: d.title, description: d.description ?? null, site: d.site ?? null, image: d.image ?? null } };
   const source = d.page_url ? `<div><a href="${escapeHtml(d.page_url)}">${escapeHtml(d.page_title || d.page_url)}</a></div>` : '';
   const text = escapeHtml(d.text)
