@@ -221,6 +221,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     if (!world) return;
     const m = new Map(rects.current);
     const els = only ? [...only].map((id) => world.querySelector(`[data-card-id="${CSS.escape(id)}"]`)).filter(Boolean) : world.querySelectorAll('[data-card-id]');
+    let changed = false;
     for (const el of els) {
       let x = 0;
       let y = 0;
@@ -230,9 +231,22 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         y += e.offsetTop;
         e = e.offsetParent;
       }
-      m.set(el.dataset.cardId, { x, y, w: el.offsetWidth, h: el.offsetHeight });
+      const id = el.dataset.cardId;
+      const old = m.get(id);
+      if (old && old.x === x && old.y === y && old.w === el.offsetWidth && old.h === el.offsetHeight) continue;
+      m.set(id, { x, y, w: el.offsetWidth, h: el.offsetHeight });
+      changed = true;
     }
-    if (!only) for (const id of m.keys()) if (!S.current.cards[id]) m.delete(id);
+    if (!only) {
+      for (const id of m.keys()) {
+        if (!S.current.cards[id]) {
+          m.delete(id);
+          changed = true;
+        }
+      }
+    }
+    // Re-render only when something moved, so measuring can never feed itself.
+    if (!changed) return;
     rects.current = m;
     setRectsVersion((v) => v + 1);
   }, []);
@@ -1050,13 +1064,17 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
           const ids = g.ids.filter((id) => cs[id] && !(cs[id].column_id && g.ids.includes(cs[id].column_id)));
           const origin = new Map();
           const lifted = {};
-          for (const id of ids) {
+          // Dragged cards ride on top of everything, keeping their order among themselves.
+          let z = topZ();
+          const byZ = [...ids].sort((a, b) => (cs[a].z ?? 0) - (cs[b].z ?? 0));
+          const allOnTop = byZ.every((id, i) => (cs[id].z ?? 0) === z - byZ.length + 1 + i);
+          for (const id of byZ) {
             const c = cs[id];
-            origin.set(id, { x: c.x, y: c.y, column_id: c.column_id, sort: c.sort });
+            origin.set(id, { x: c.x, y: c.y, column_id: c.column_id, sort: c.sort, z: c.z });
             if (c.column_id && cs[c.column_id]) {
               const r = rects.current.get(id);
-              lifted[id] = { ...c, column_id: null, x: r?.x ?? c.x, y: r?.y ?? c.y, w: r?.w ?? c.w, z: topZ() + 1 };
-            }
+              lifted[id] = { ...c, column_id: null, x: r?.x ?? c.x, y: r?.y ?? c.y, w: r?.w ?? c.w, z: ++z };
+            } else if (!allOnTop) lifted[id] = { ...c, z: ++z };
           }
           if (Object.keys(lifted).length) setCards((p) => ({ ...p, ...lifted }));
           const start = new Map(ids.map((id) => [id, lifted[id] ? { x: lifted[id].x, y: lifted[id].y } : { x: cs[id].x, y: cs[id].y }]));
@@ -1129,7 +1147,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             notify(`Moved ${g.ids.length} card${g.ids.length > 1 ? 's' : ''}`);
           } else {
             patchCards(
-              g.ids.map((id) => ({ id, x: cs[id].x, y: cs[id].y, column_id: null })),
+              g.ids.map((id) => ({ id, x: cs[id].x, y: cs[id].y, z: cs[id].z, column_id: null })),
               () => patchCards(back.map(({ board_id, ...rest }) => rest))
             );
           }
@@ -1519,11 +1537,14 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   // Far out, images load the 256 px mini instead of the 800 px thumbnail.
   const lowRes = view.s < 0.45;
 
+  // Watch card sizes. Keyed on which cards are rendered, not their positions, so a drag
+  // does not re-subscribe every card on every mouse move.
+  const shownKey = useMemo(() => shown.map((c) => c.id).join(',') + '|' + [...kidsOf.values()].flat().map((c) => c.id).join(','), [shown, kidsOf]);
   useEffect(() => {
     const ro = new ResizeObserver(scheduleMeasure);
     for (const el of worldRef.current.querySelectorAll('[data-card-id]')) ro.observe(el);
     return () => ro.disconnect();
-  }, [shown, kidsOf, scheduleMeasure]);
+  }, [shownKey, scheduleMeasure]);
 
   const cardLayer = useMemo(
     () =>
@@ -1655,7 +1676,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       </aside>
 
       <div
-        className="canvas"
+        className={dragIds.size ? 'canvas moving' : 'canvas'}
         ref={canvasRef}
         style={{ backgroundSize: `${gridSize}px ${gridSize}px`, backgroundPosition: `${view.x}px ${view.y}px` }}
         onPointerDown={onPointerDown}

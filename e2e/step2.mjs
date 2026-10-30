@@ -1,5 +1,5 @@
 // Step 2 checks: web canvas. Needs a server on ZB_URL started from an empty data dir.
-import { api, center, check, done, drag, launch, login, PNG, sleep } from './lib.mjs';
+import { api, BASE, center, check, done, drag, launch, login, PNG, sleep, solidPng } from './lib.mjs';
 
 const browser = await launch();
 const { page, context } = await login(browser);
@@ -120,6 +120,53 @@ const phone = await login(browser, { width: 390, height: 844 });
 await phone.page.waitForSelector('.card-todo');
 check(await phone.page.locator('.canvas').isVisible(), 'phone size: canvas renders');
 await page.screenshot({ path: process.env.SHOT_DIR ? process.env.SHOT_DIR + '/step2-desktop.png' : 'step2-desktop.png' });
+
+// --- moving and resizing images on a 150% scaled screen (it used to hit React's update limit) ---
+{
+  await api('GET', '/api/me');
+  const fd = new FormData();
+  fd.append('file', new Blob([solidPng(1536, 2048, [40, 160, 90])], { type: 'image/png' }), 'tall.png');
+  const file = (await (await fetch(BASE + '/api/upload', { method: 'POST', headers: { cookie: api.cookie }, body: fd })).json()).file;
+  const holder = await api('POST', '/api/boards/root/cards', { cards: [{ type: 'board', x: 900, y: 600, title: 'Drag test' }] });
+  const childId = holder.cards[0].child.id;
+  const made = await api('POST', `/api/boards/${childId}/cards`, {
+    cards: [
+      { type: 'image', x: 120, y: 60, w: 330, data: { fileId: file.id } },
+      { type: 'image', x: 560, y: 60, w: 330, data: { fileId: file.id } },
+      { type: 'note', x: 1000, y: 80, data: { html: '<div>under</div>' } },
+      { type: 'note', x: 1040, y: 110, data: { html: '<div>on top</div>' } },
+    ],
+  });
+  const [img1, img2, under, onTop] = made.cards;
+  const hi = await login(browser, { width: 1440, height: 900 }, { deviceScaleFactor: 1.5 });
+  const errors = [];
+  hi.page.on('pageerror', (e) => errors.push(e.message));
+  await hi.page.goto(BASE + '/#/b/' + childId);
+  await hi.page.waitForSelector('.card-image img');
+  await sleep(500);
+  const card = (c) => hi.page.locator(`[data-card-id="${c.id}"]`);
+  for (const c of [img1, img2]) {
+    const b = await card(c).boundingBox();
+    const p = { x: b.x + 30, y: b.y + 30 };
+    await drag(hi.page, p, { x: p.x + 90, y: p.y + 40 }, 80);
+    const h = await center(card(c).locator('.handle-resize'));
+    await drag(hi.page, h, { x: h.x - 100, y: h.y + 30 }, 80);
+    await drag(hi.page, { x: h.x - 100, y: h.y + 30 }, { x: h.x + 80, y: h.y }, 80);
+  }
+  check(!errors.length && (await card(img1).count()) === 1, 'moving and resizing images at 150% scale keeps the app running', errors[0]);
+
+  // A dragged card comes to the front and stays there.
+  const ub = await card(under).boundingBox();
+  await drag(hi.page, { x: ub.x + 10, y: ub.y + 10 }, { x: ub.x + 60, y: ub.y + 120 }, 20);
+  const zOf = async (c) => Number(await card(c).evaluate((e) => e.style.zIndex));
+  check((await zOf(under)) > (await zOf(onTop)), 'dragged note comes to the front');
+  await sleep(400);
+  const saved = (await api('GET', `/api/boards/${childId}`)).cards;
+  const z = (c) => saved.find((s) => s.id === c.id).z;
+  check(z(under) > z(onTop), 'front position is saved');
+  check((await card(under).evaluate((e) => getComputedStyle(e).cursor)) === 'grab', 'cards show a grab cursor');
+  await hi.context.close();
+}
 
 await browser.close();
 done();

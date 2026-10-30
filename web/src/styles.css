@@ -254,6 +254,13 @@ input {
 .canvas.panning * {
   cursor: grab !important;
 }
+.canvas.moving,
+.canvas.moving * {
+  cursor: grabbing !important;
+}
+.card:not(.editing) {
+  cursor: grab;
+}
 .world {
   position: absolute;
   left: 0;
@@ -361,7 +368,7 @@ input {
 .note-body {
   padding: 12px 14px;
   min-height: 44px;
-  cursor: default;
+  cursor: inherit;
 }
 .card.editing .note-body {
   cursor: text;
