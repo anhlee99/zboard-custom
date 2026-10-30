@@ -44,18 +44,18 @@ $('open-settings').onclick = () => showSetup('', '');
 // Runs inside the page: images at least 120 px, og:image, and large CSS backgrounds.
 function collectImages() {
   const found = new Map();
-  const add = (src, w, h) => {
+  const add = (src, w, h, alt = '') => {
     if (!src || src.startsWith('blob:')) return;
     try {
       src = new URL(src, location.href).href;
     } catch {
       return;
     }
-    if (!found.has(src)) found.set(src, { src, w, h });
+    if (!found.has(src)) found.set(src, { src, w, h, alt: String(alt).trim().slice(0, 500) });
   };
   const og = document.querySelector('meta[property="og:image"], meta[property="og:image:url"], meta[name="og:image"]');
   if (og?.content) add(og.content, 0, 0);
-  for (const img of document.images) if (img.naturalWidth >= 120 && img.naturalHeight >= 120) add(img.currentSrc || img.src, img.naturalWidth, img.naturalHeight);
+  for (const img of document.images) if (img.naturalWidth >= 120 && img.naturalHeight >= 120) add(img.currentSrc || img.src, img.naturalWidth, img.naturalHeight, img.alt || img.title);
   let checked = 0;
   for (const el of document.querySelectorAll('body *')) {
     if (++checked > 6000 || found.size > 200) break;
@@ -71,6 +71,7 @@ function collectImages() {
 
 let tab = null;
 const chosen = new Set();
+const altOf = new Map(); // src -> alt text on the page
 
 function updateSaveButton() {
   $('save-images').disabled = !chosen.size;
@@ -134,6 +135,7 @@ async function showMain() {
   };
   $('grid').innerHTML = '';
   for (const img of images) {
+    if (img.alt) altOf.set(img.src, img.alt);
     const t = document.createElement('button');
     t.className = 'tile';
     t.dataset.src = img.src;
@@ -152,7 +154,7 @@ async function showMain() {
   }
   // The service worker does the uploads, so closing the popup doesn't stop them.
   $('save-images').onclick = () => {
-    chrome.runtime.sendMessage({ type: 'saveImages', items: [...chosen], board: $('board').value, page: { url: tab.url, title: tab.title }, tabId: tab.id });
+    chrome.runtime.sendMessage({ type: 'saveImages', items: [...chosen].map((src) => ({ src, alt: altOf.get(src) || '' })), board: $('board').value, page: { url: tab.url, title: tab.title }, tabId: tab.id });
     status($('status'), `Saving ${chosen.size}… (you can close this)`, 'ok');
     setTimeout(() => window.close(), 600);
   };

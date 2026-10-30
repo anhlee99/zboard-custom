@@ -1,5 +1,5 @@
 // Step 3 checks: touch gestures at phone size, phone layout, PWA installability.
-import { api, center, check, chromiumPersistent, done, launch, login, sleep } from './lib.mjs';
+import { api, BASE, center, check, chromiumPersistent, done, launch, login, sleep } from './lib.mjs';
 
 // Seed a note and a column on a fresh board.
 const root = await api('GET', '/api/boards/root');
@@ -124,10 +124,10 @@ await desk.page.waitForSelector('.canvas');
 const controlled = await desk.page.evaluate(() => !!navigator.serviceWorker.controller);
 check(controlled, 'service worker controls the page');
 const caches = await desk.page.evaluate(async () => (await caches.keys()).join(','));
-const swSrc = await (await fetch('http://localhost:3000/sw.js')).text();
+const swSrc = await (await fetch(BASE + '/sw.js')).text();
 const version = swSrc.match(/VERSION = '([^']+)'/)[1];
 check(caches.includes('zb-shell-' + version), `shell cached under the build version (${caches})`);
-const manifest = await (await fetch('http://localhost:3000/manifest.webmanifest')).json();
+const manifest = await (await fetch(BASE + '/manifest.webmanifest')).json();
 check(manifest.name === 'ZBoard' && manifest.display === 'standalone' && manifest.icons.some((i) => i.sizes === '512x512' && i.purpose === 'maskable'), 'manifest: name, standalone, icons incl. maskable');
 // Installability is not reported in incognito contexts, so use a throwaway persistent profile.
 const os = await import('node:os');
@@ -135,7 +135,7 @@ const fs = await import('node:fs');
 const profile = fs.mkdtempSync(os.tmpdir() + '/zb-pwa-');
 const persistent = await chromiumPersistent(profile);
 const pp = persistent.pages()[0] || (await persistent.newPage());
-await pp.goto('http://localhost:3000/');
+await pp.goto(BASE + '/');
 await pp.evaluate(() => navigator.serviceWorker.ready);
 await pp.reload();
 await sleep(1000);

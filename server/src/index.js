@@ -256,7 +256,14 @@ async function makeDerivatives(row, isHeic) {
   out.width = turned ? meta.height : meta.width;
   out.height = turned ? meta.width : meta.height;
   await sharp(src).rotate().resize(800, 800, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 80 }).toFile(thumbPath(row.id));
+  out.alpha = await hasTransparency(meta, thumbPath(row.id));
   return out;
+}
+
+// Cut-outs (PNGs with a see-through background) are drawn without a card frame.
+async function hasTransparency(meta, thumb) {
+  if (!meta.hasAlpha) return 0;
+  return (await sharp(thumb).stats()).isOpaque ? 0 : 1;
 }
 
 // f: { path, originalname, mimetype, size }; the temp file at f.path is moved into files/.
@@ -503,6 +510,7 @@ app.post('/api/clips', upload.single('file'), async (req, res) => {
   const boardId = b.board_id || 'root';
   if (!store.getBoard(boardId)) throw new HttpError(404, 'That board no longer exists. Pick another board in the extension.');
   const source = { page_url: str(b.page_url), page_title: str(b.page_title) };
+  const alt = str(b.alt)?.slice(0, 500) || null; // the image's alt text on the page
   let clip;
   if (req.file) {
     let file;
@@ -511,10 +519,10 @@ app.post('/api/clips', upload.single('file'), async (req, res) => {
     } finally {
       fs.rmSync(req.file.path, { force: true });
     }
-    clip = store.createClip(boardId, 'image', { fileId: file.id, src_url: str(b.src_url), ...source });
+    clip = store.createClip(boardId, 'image', { fileId: file.id, src_url: str(b.src_url), alt, ...source });
   } else if (b.kind === 'image') {
     const file = await storeRemoteImage(httpUrl(b.src_url).href);
-    clip = store.createClip(boardId, 'image', { fileId: file.id, src_url: b.src_url, ...source });
+    clip = store.createClip(boardId, 'image', { fileId: file.id, src_url: b.src_url, alt, ...source });
   } else if (b.kind === 'link') {
     const url = httpUrl(b.url).href;
     clip = store.createClip(boardId, 'link', { url, title: str(b.title) || url, ...source });
@@ -537,7 +545,8 @@ app.post('/api/clips', upload.single('file'), async (req, res) => {
 
 function clipToCard(clip) {
   const d = clip.data;
-  if (clip.kind === 'image') return { type: 'image', data: { fileId: d.fileId, caption: '' } };
+  // Images keep the page they came from (shown as "From site") and the page's alt text.
+  if (clip.kind === 'image') return { type: 'image', data: { fileId: d.fileId, caption: '', alt: d.alt || null, source_url: d.page_url || null, source_title: d.page_title || null } };
   if (clip.kind === 'link') return { type: 'link', data: { url: d.url, title: d.title, description: d.description ?? null, site: d.site ?? null, image: d.image ?? null } };
   const source = d.page_url ? `<div><a href="${escapeHtml(d.page_url)}">${escapeHtml(d.page_title || d.page_url)}</a></div>` : '';
   const text = escapeHtml(d.text)
@@ -746,6 +755,16 @@ async function rebuildMissingThumbs() {
     }
   }
   if (n) log(`Rebuilt ${n} missing thumbnail(s)`);
+  // Files uploaded before cut-out detection existed.
+  for (const f of store.allFiles()) {
+    if (f.alpha != null || !fs.existsSync(thumbPath(f.id))) continue;
+    try {
+      const src = fs.existsSync(displayPath(f)) ? displayPath(f) : thumbPath(f.id);
+      store.setFileAlpha(f.id, await hasTransparency(await sharp(src).metadata(), thumbPath(f.id)));
+    } catch (e) {
+      log(`transparency check for ${f.id} failed: ${e.message}`);
+    }
+  }
 }
 
 const server = app.listen(PORT);

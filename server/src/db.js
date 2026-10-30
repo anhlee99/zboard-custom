@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS drive_files (
   uploaded_at INTEGER NOT NULL
 );
 `;
-const SEARCH_VERSION = '1';
+const SEARCH_VERSION = '2'; // bump to re-index everything on the next start
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 const decodeEntities = (s) =>
@@ -112,6 +112,14 @@ const stripHtml = (html) =>
     .replace(/\s*\n\s*/g, '\n')
     .trim();
 
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+};
+
 // Searchable text of a card. Board cards are found through their board's title.
 export function cardText(c) {
   const d = c.data || {};
@@ -121,7 +129,7 @@ export function cardText(c) {
     case 'todo':
       return [d.title, ...(d.items || []).map((i) => i.text)].filter(Boolean).join('\n');
     case 'image':
-      return d.caption || '';
+      return [d.caption, d.alt, d.source_title, hostOf(d.source_url)].filter(Boolean).join('\n');
     case 'link':
       return [d.title, d.description, d.url].filter(Boolean).join('\n');
     case 'column':
@@ -166,9 +174,25 @@ function num(v, name, { int = false, nullable = true } = {}) {
 const str = (v, max = 2000) => (v === null || v === undefined ? null : String(v).slice(0, max));
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
 
+// Board cover: an icon (emoji) or a few letters, on a background colour with a text colour.
+const HEX = /^#[0-9a-f]{6}$/i;
+function cleanCover(c) {
+  if (!obj(c)) return null;
+  const kind = c.kind === 'text' ? 'text' : c.kind === 'icon' ? 'icon' : null;
+  const value = typeof c.value === 'string' ? [...c.value.trim()].slice(0, kind === 'text' ? 4 : 8).join('') : '';
+  return {
+    kind: value ? kind : null,
+    value: kind ? value : '',
+    bg: HEX.test(c.bg) ? c.bg.toLowerCase() : null,
+    fg: HEX.test(c.fg) ? c.fg.toLowerCase() : null,
+  };
+}
+
 export function createStore(file) {
   const db = openDatabase(file);
   db.exec(SCHEMA);
+  // Columns added after the first release.
+  if (!db.prepare('PRAGMA table_info(files)').all().some((c) => c.name === 'alpha')) db.exec('ALTER TABLE files ADD COLUMN alpha INTEGER');
   const now = () => Date.now();
 
   if (!db.prepare('SELECT 1 FROM boards WHERE id = ?').get('root')) {
@@ -192,7 +216,7 @@ export function createStore(file) {
   function decorate(card) {
     if (card?.type === 'board') {
       const b = getBoard(card.data.boardId);
-      card.child = b ? { id: b.id, title: b.title, color: b.color, count: countCards(b.id) } : null;
+      card.child = b ? { id: b.id, title: b.title, color: b.color, cover: b.data?.cover ?? null, count: countCards(b.id) } : null;
     }
     return card;
   }
@@ -244,7 +268,9 @@ export function createStore(file) {
     db.prepare('DELETE FROM card_tags WHERE card_id = ?').run(id);
     const c = getCard(id);
     if (!c) return;
-    const text = cardText(c);
+    // Images are also found by their file name.
+    const name = c.type === 'image' && c.data?.fileId ? db.prepare('SELECT name FROM files WHERE id = ?').get(c.data.fileId)?.name : null;
+    const text = [cardText(c), name].filter(Boolean).join('\n');
     if (text) db.prepare("INSERT INTO search_fts (ref, board_id, kind, text) VALUES (?, ?, 'card', ?)").run(id, c.board_id, text);
     for (const tag of tagsOf(c)) db.prepare('INSERT OR IGNORE INTO card_tags (card_id, board_id, tag) VALUES (?, ?, ?)').run(id, c.board_id, tag);
   }
@@ -323,7 +349,7 @@ export function createStore(file) {
     const next = {};
     if ('title' in p) next.title = str(p.title, 500) ?? '';
     if ('color' in p) next.color = str(p.color, 50);
-    if (obj(p.data)) next.data = JSON.stringify({ ...board.data, ...p.data });
+    if (obj(p.data)) next.data = JSON.stringify({ ...board.data, ...p.data, ...('cover' in p.data ? { cover: cleanCover(p.data.cover) } : {}) });
     if (!Object.keys(next).length) return board;
     next.updated_at = now();
     const sets = Object.keys(next).map((k) => `${k} = :${k}`).join(', ');
@@ -643,7 +669,8 @@ export function createStore(file) {
 
   // ---- files ----
   const insertFile = (f) =>
-    db.prepare(insertSql('files', ['id', 'name', 'mime', 'ext', 'size', 'width', 'height', 'sha256', 'display_ext', 'created_at'])).run(f);
+    db.prepare(insertSql('files', ['id', 'name', 'mime', 'ext', 'size', 'width', 'height', 'sha256', 'display_ext', 'alpha', 'created_at'])).run({ alpha: null, ...f });
+  const setFileAlpha = (id, alpha) => db.prepare('UPDATE files SET alpha = ? WHERE id = ?').run(alpha ? 1 : 0, id);
   const getFile = (id) => db.prepare('SELECT * FROM files WHERE id = ?').get(id) ?? null;
 
   return {
@@ -664,6 +691,7 @@ export function createStore(file) {
     patchArrow,
     deleteArrow,
     insertFile,
+    setFileAlpha,
     getFile,
     getClip,
     createClip,

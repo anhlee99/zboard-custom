@@ -36,6 +36,11 @@ const PATHS = {
   edit: 'M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4',
   select: 'M4 4h4 M12 4h4 M20 4v4 M20 12v4 M20 20h-4 M12 20H8 M4 20v-4 M4 12V8',
   fit: 'M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5',
+  play: 'M8 5l11 7-11 7z',
+  arrowStart: 'M20 12H5 M10 7l-5 5 5 5',
+  arrowEnd: 'M4 12h15 M14 7l5 5-5 5',
+  label: 'M3 8h18v8H3z M7 12h10',
+  dashed: 'M3 12h3 M10.5 12h3 M18 12h3',
 };
 
 export function Icon({ name, size = 20, ...rest }) {

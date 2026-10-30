@@ -125,3 +125,37 @@ export function noisePng(w, h, seed = 1) {
 
 // 1×1 PNG, enough for upload tests.
 export const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+
+// See-through PNG: a coloured disc on a transparent background, like a product cut-out.
+export function cutoutPng(w, h, [r, g, b]) {
+  const table = [...Array(256)].map((_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const chunk = (type, data) => {
+    const td = Buffer.concat([Buffer.from(type), data]);
+    let c = 0xffffffff;
+    for (const x of td) c = table[(c ^ x) & 0xff] ^ (c >>> 8);
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE((c ^ 0xffffffff) >>> 0);
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6; // RGBA
+  const rows = [];
+  for (let y = 0; y < h; y++) {
+    const row = Buffer.alloc(1 + w * 4);
+    for (let x = 0; x < w; x++) {
+      const inside = (x - w / 2) ** 2 + (y - h / 2) ** 2 < (Math.min(w, h) * 0.4) ** 2;
+      row.set([r, g, b, inside ? 255 : 0], 1 + x * 4);
+    }
+    rows.push(row);
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]);
+}
