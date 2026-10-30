@@ -3,6 +3,8 @@ import { api, openEvents, uploadFiles } from './api.js';
 import { CardView, youtubeId } from './Cards.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import CoverPicker from './Cover.jsx';
+import DrawLayer from './Draw.jsx';
+import { inkBounds, mapStrokes } from './ink.js';
 import SavedPanel, { CLIP_DRAG_TYPE } from './SavedPanel.jsx';
 import { Icon } from './icons.jsx';
 import { COLORS, DEFAULT_W, byId, clamp, htmlText, isImageFile, isUrl, sortBetween, textToHtml, uid } from './util.js';
@@ -86,6 +88,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   const [toast, setToast] = useState(null);
   const [colorOpen, setColorOpen] = useState(false);
   const [coverFor, setCoverFor] = useState(null); // board card whose cover picker is open
+  const [drawing, setDrawing] = useState(null); // { cardId, strokes } while drawing mode is open
   useEffect(() => {
     if (coverFor && !sel.has(coverFor)) setCoverFor(null);
   }, [sel, coverFor]);
@@ -99,7 +102,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   const [rectsVersion, setRectsVersion] = useState(0);
 
   const S = useRef({});
-  S.current = { cards, arrows, files, view, sel, selArrow, editing };
+  S.current = { cards, arrows, files, view, sel, selArrow, editing, drawing };
   const canvasRef = useRef(null);
   const worldRef = useRef(null);
   const fileInput = useRef(null);
@@ -621,6 +624,35 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
 
   // ---------- card actions (passed to cards) ----------
   const stopEdit = useCallback((id) => setEditing((e) => (e === id ? null : e)), []);
+  // Strokes (board units) become a drawing card sitting exactly where they were drawn.
+  const saveDrawing = useCallback(
+    async (strokes) => {
+      const d = S.current.drawing;
+      setDrawing(null);
+      if (!d) return;
+      const old = d.cardId ? S.current.cards[d.cardId] : null;
+      if (!strokes.length) {
+        if (old) deleteCards([old.id]);
+        return;
+      }
+      const b = inkBounds(strokes);
+      const x = Math.floor(b.x);
+      const y = Math.floor(b.y);
+      const w = Math.max(1, Math.ceil(b.x + b.w) - x);
+      const h = Math.max(1, Math.ceil(b.y + b.h) - y);
+      const data = { strokes: mapStrokes(strokes, 1, -x, -y), vw: w, vh: h };
+      if (old) {
+        const back = { id: old.id, x: old.x, y: old.y, w: old.w, data: old.data };
+        patchCards([{ id: old.id, x, y, w, data }], () => patchCards([back]));
+        setSel(new Set([old.id]));
+      } else {
+        const [made] = await createCards([{ type: 'drawing', x, y, w, data }]);
+        if (made) setSel(new Set([made.id]));
+      }
+    },
+    [patchCards, createCards, deleteCards]
+  );
+
   // Cover of the board a board card opens. Undo puts the old one back.
   const setCover = useCallback(
     async function setCover(cardId, cover, { record = true } = {}) {
@@ -696,12 +728,22 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     [patchCards, deleteCards, setLink, stopEdit, notify, setCover]
   );
 
+  // Drawing mode, empty or with a drawing card's strokes moved back to board units.
+  const openDrawing = useCallback((c) => {
+    setSel(EMPTY);
+    setEditing(null);
+    if (!c) return setDrawing({ cardId: null, strokes: [] });
+    const k = (c.w || DEFAULT_W.drawing) / (c.data.vw || 1);
+    setDrawing({ cardId: c.id, strokes: mapStrokes(c.data.strokes || [], k, c.x, c.y) });
+  }, []);
+
   const openCard = useCallback((c) => {
     if (!c) return;
+    if (c.type === 'drawing') return openDrawing(c);
     if (c.type === 'board' && c.data.boardId) location.hash = `#/b/${c.data.boardId}`;
     else if (c.type === 'link' && c.data.url) window.open(c.data.url, '_blank', 'noopener');
     else if (c.type === 'image' && c.data.fileId) setLightbox(c.data.fileId);
-  }, []);
+  }, [openDrawing]);
 
   const startEdit = useCallback((id) => {
     setSel(new Set([id]));
@@ -982,6 +1024,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       single && { label: opens ? 'Open' : 'Edit', icon: opens ? 'open' : 'edit', shortcut: opens ? 'Dbl-click' : 'Enter', onClick: () => (opens ? openCard(single) : startEdit(single.id)) },
       single && opens && single.type !== 'image' && { label: single.type === 'board' ? 'Rename' : 'Edit link', icon: 'edit', shortcut: 'Enter', onClick: () => startEdit(single.id) },
       single?.type === 'board' && { label: 'Change cover', icon: 'palette', onClick: () => setCoverFor(single.id) },
+      single?.type === 'drawing' && { label: 'Edit drawing', icon: 'draw', shortcut: 'Dbl-click', onClick: () => openDrawing(single) },
       single && { separator: true },
       { label: 'Copy' + many, icon: 'copy', shortcut: 'Ctrl+C', onClick: () => { const c = copySelection(false, ids); if (c) toSystemClipboard(c); } }, // prettier-ignore
       { label: 'Cut' + many, icon: 'cut', shortcut: 'Ctrl+X', onClick: () => { const c = copySelection(true, ids); if (c) toSystemClipboard(c); } }, // prettier-ignore
@@ -1351,7 +1394,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         if (lt && lt.id === g.card && now - lt.t < 350) {
           lastTap.current = null;
           const c = S.current.cards[g.card];
-          if (c && (c.type === 'board' || c.type === 'image' || (c.type === 'link' && c.data.url))) openCard(c);
+          if (c && (c.type === 'board' || c.type === 'image' || c.type === 'drawing' || (c.type === 'link' && c.data.url))) openCard(c);
           else if (c) startEdit(c.id);
         } else {
           lastTap.current = { id: g.card, t: now };
@@ -1391,7 +1434,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         if (!c || S.current.editing === c.id) return;
         if (e.target.closest('input, textarea, button, a')) return;
         if (c.type === 'board' && e.target.closest('.board-title')) startEdit(c.id); // double-click the name to rename
-        else if (c.type === 'board' || c.type === 'image') openCard(c);
+        else if (c.type === 'board' || c.type === 'image' || c.type === 'drawing') openCard(c);
         else if (c.type === 'link' && c.data.url) openCard(c);
         else startEdit(c.id);
         return;
@@ -1417,6 +1460,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
 
   useEffect(() => {
     const down = (e) => {
+      if (S.current.drawing) return; // the drawing layer has its own keys
       const typing = e.target.closest?.('input, textarea, [contenteditable="true"]');
       if (e.key === 'Escape') {
         if (lightbox) return setLightbox(null);
@@ -1484,7 +1528,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       e.clipboardData.setData(CLIP_TYPE, JSON.stringify(clip));
     };
     const paste = (e) => {
-      if (e.target.closest?.('input, textarea, [contenteditable="true"]')) return;
+      if (S.current.drawing || e.target.closest?.('input, textarea, [contenteditable="true"]')) return;
       const dt = e.clipboardData;
       if (!dt) return;
       clipEventAt.current = Date.now();
@@ -1645,10 +1689,11 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             actions={actions}
             file={files[c.data.fileId]}
             lowRes={lowRes}
+            hidden={drawing?.cardId === c.id}
           />
         )
       ),
-    [shown, kidsOf, sel, editing, dragIds, cutIds, actions, files, hint, lowRes]
+    [shown, kidsOf, sel, editing, dragIds, cutIds, actions, files, hint, lowRes, drawing?.cardId]
   );
 
   const arrowLayer = useMemo(() => {
@@ -1767,6 +1812,10 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             <span>{t.label}</span>
           </button>
         ))}
+        <button className="tool" onClick={() => openDrawing(null)} data-tip="Draw (pen, mouse or finger)" aria-label="Draw">
+          <Icon name="draw" size={22} />
+          <span>Draw</span>
+        </button>
         <button className="tool tool-camera" onClick={() => cameraInput.current.click()} data-tip="Take a photo" aria-label="Camera">
           <Icon name="camera" size={22} />
           <span>Camera</span>
@@ -1936,6 +1985,8 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             <CoverPicker key={coverCard.id} cover={coverCard.child?.cover} title={coverCard.child?.title} onChange={(cv) => setCover(coverCard.id, cv)} onClose={() => setCoverFor(null)} />
           </div>
         )}
+
+        {drawing && <DrawLayer key={drawing.cardId || 'new'} view={view} canvasRef={canvasRef} initial={drawing.strokes} onSave={saveDrawing} onCancel={() => setDrawing(null)} />}
 
         {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={menuItems(ctx)} onClose={closeMenu} />}
 

@@ -2,6 +2,7 @@ import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from 're
 import { DEFAULT_W, hostOf, sanitize, uid } from './util.js';
 import { Icon } from './icons.jsx';
 import { CoverTile } from './Cover.jsx';
+import { strokePath } from './ink.js';
 
 function placeCaretAtEnd(el) {
   const range = document.createRange();
@@ -373,13 +374,25 @@ function ColumnBody({ card, editing, kids, sel, editingId, files, actions, dropI
   );
 }
 
-const BODIES = { note: NoteBody, todo: TodoBody, image: ImageBody, link: LinkBody, board: BoardBody };
+// Strokes drawn as SVG, scaled to the card's width. Double-click to draw on it again.
+function DrawingBody({ card }) {
+  const d = card.data;
+  return (
+    <svg className="drawing-svg" viewBox={`0 0 ${d.vw || 1} ${d.vh || 1}`} style={{ aspectRatio: `${d.vw || 1} / ${d.vh || 1}` }}>
+      {(d.strokes || []).map((st, i) => (
+        <path key={i} d={strokePath(st)} fill={st.c} />
+      ))}
+    </svg>
+  );
+}
+
+const BODIES = { note: NoteBody, todo: TodoBody, image: ImageBody, link: LinkBody, board: BoardBody, drawing: DrawingBody };
 
 export const CardView = memo(function CardView(props) {
-  const { card, inColumn, selected, editing, dragging, cut } = props;
+  const { card, inColumn, selected, editing, dragging, cut, hidden } = props;
   const style = inColumn ? undefined : { left: card.x, top: card.y, width: card.w || DEFAULT_W[card.type], zIndex: card.z };
   const cutout = card.type === 'image' && props.file?.alpha === 1; // see-through PNG: no card frame
-  const cls = ['card', `card-${card.type}`, cutout && 'cutout', selected && 'selected', editing && 'editing', dragging && 'dragging', cut && 'cut', card.color && `c-${card.color}`, inColumn && 'in-column']
+  const cls = ['card', `card-${card.type}`, cutout && 'cutout', selected && 'selected', editing && 'editing', dragging && 'dragging', cut && 'cut', hidden && 'ink-editing', card.color && `c-${card.color}`, inColumn && 'in-column']
     .filter(Boolean)
     .join(' ');
   const Body = card.type === 'column' ? ColumnBody : BODIES[card.type];

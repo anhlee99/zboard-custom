@@ -259,6 +259,8 @@ function titleOf(card, files = {}) {
       return d.caption || files[d.fileId]?.name || 'Image';
     case 'column':
       return d.title || 'Column';
+    case 'drawing':
+      return `Drawing (${(d.strokes || []).length} strokes)`;
     default:
       return card.type;
   }
@@ -430,11 +432,11 @@ function inlineProtocol(env = process.env) {
   return 'blocks';
 }
 
-async function drawInline(fileId) {
+async function drawInline(fileId, base = `/api/files/${fileId}/render`) {
   const cols = Math.max(10, Math.min((process.stdout.columns || 80) - 2, 100));
   const proto = inlineProtocol();
   if (proto === 'iterm' || proto === 'kitty') {
-    const png = Buffer.from(await (await api('GET', `/api/files/${fileId}/render?mode=png&w=${cols * 10}`, null, { raw: true })).arrayBuffer());
+    const png = Buffer.from(await (await api('GET', `${base}?mode=png&w=${cols * 10}`, null, { raw: true })).arrayBuffer());
     const b64 = png.toString('base64');
     if (proto === 'iterm') process.stdout.write(`\x1b]1337;File=inline=1;size=${png.length};width=${cols};preserveAspectRatio=1:${b64}\x07\n`);
     else {
@@ -446,7 +448,7 @@ async function drawInline(fileId) {
     }
     return;
   }
-  process.stdout.write(await (await api('GET', `/api/files/${fileId}/render?mode=ansi&cols=${cols}`, null, { raw: true })).text());
+  process.stdout.write(await (await api('GET', `${base}?mode=ansi&cols=${cols}`, null, { raw: true })).text());
 }
 
 async function download(fileId, dest) {
@@ -466,7 +468,7 @@ async function showImage(fileId, file) {
 }
 
 // ---------- formatting ----------
-const TYPE_TAG = { board: blue('board '), note: 'note  ', todo: green('todo  '), link: yellow('link  '), image: paint('35')('image '), column: dim('column') };
+const TYPE_TAG = { board: blue('board '), note: 'note  ', todo: green('todo  '), link: yellow('link  '), image: paint('35')('image '), column: dim('column'), drawing: paint('36')('draw  ') };
 
 function rowFor(card, files, n, depth, long) {
   const d = card.data || {};
@@ -568,6 +570,8 @@ async function showCard(card, list) {
       await showImage(d.fileId, list.files[d.fileId]);
       if (d.caption) say(d.caption);
       return;
+    case 'drawing':
+      return drawInline(null, `/api/cards/${card.id}/render`);
     case 'board': {
       const sub = await listing(d.boardId);
       say(bold(titleOf(card) + '/'));

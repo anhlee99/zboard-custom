@@ -10,6 +10,7 @@ import sharp from 'sharp';
 import cron from 'node-cron';
 import { ZipArchive } from 'archiver';
 import { createStore, HttpError, isId, newId } from './db.js';
+import { drawingSvg } from './ink.js';
 import { createDrive, createLocalBackups } from './backup.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -419,12 +420,23 @@ app.get('/api/files/:id/render', async (req, res) => {
   const f = fileOr404(req.params.id);
   const src = fs.existsSync(thumbPath(f.id)) ? thumbPath(f.id) : displayPath(f);
   if (!fs.existsSync(src)) throw new HttpError(404, 'File is missing on disk');
-  const image = () => sharp(src).rotate();
-  if (req.query.mode === 'png') {
-    const w = Math.min(2000, Math.max(16, Number(req.query.w) || 800));
+  await sendRender(res, req.query, () => sharp(src).rotate());
+});
+
+// Drawing cards, rasterised from their strokes the same way.
+app.get('/api/cards/:id/render', async (req, res) => {
+  const card = store.getCard(req.params.id);
+  if (!card || card.type !== 'drawing') throw new HttpError(404, 'No drawing with that id');
+  const svg = Buffer.from(drawingSvg(card.data, 1200));
+  await sendRender(res, req.query, () => sharp(svg));
+});
+
+async function sendRender(res, query, image) {
+  if (query.mode === 'png') {
+    const w = Math.min(2000, Math.max(16, Number(query.w) || 800));
     return res.type('png').send(await image().resize(w, w, { fit: 'inside', withoutEnlargement: true }).png().toBuffer());
   }
-  const cols = Math.min(400, Math.max(4, Number(req.query.cols) || 80));
+  const cols = Math.min(400, Math.max(4, Number(query.cols) || 80));
   const { data, info } = await image().resize({ width: cols }).flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const px = (x, y) => (y < info.height ? `${data[(y * info.width + x) * 3]};${data[(y * info.width + x) * 3 + 1]};${data[(y * info.width + x) * 3 + 2]}` : '255;255;255');
   let out = '';
@@ -441,7 +453,7 @@ app.get('/api/files/:id/render', async (req, res) => {
     out += '\x1b[0m\n';
   }
   res.type('text/plain; charset=utf-8').send(out);
-});
+}
 
 app.get('/files/:id', (req, res) => {
   const f = fileOr404(req.params.id);

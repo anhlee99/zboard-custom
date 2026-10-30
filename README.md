@@ -4,7 +4,13 @@ A self-hosted, Milanote-style canvas for notes, to-dos, images, links, nested bo
 One Node process with SQLite, a web app that also installs on a phone, a browser extension that saves
 things from any page, and a terminal client.
 
-- **Canvas**: six card types, nested boards, columns, arrows, colours, undo, live sync between devices.
+- **Canvas**: notes, to-dos, images, links (YouTube plays in place), boards with icon covers, columns,
+  drawings, styled arrows, colours, undo, live sync between devices.
+- **Draw**: the Draw tool (left toolbar) opens a drawing layer: pen (pressure with a stylus), select and
+  move strokes, eraser, colours, four sizes, undo/redo (Ctrl+Z / Ctrl+Y), Save or Discard (Esc).
+  Saved strokes become a drawing card where you drew them; double-click it to draw on it again. Keys in
+  drawing mode: P pen, V select, E eraser, Delete removes selected strokes, Ctrl+S saves. Wheel and
+  trackpad still pan and zoom.
 - **Phone**: touch gestures, camera button, installs from the home screen (PWA).
 - **Find**: Ctrl+K search (accent-insensitive) and #tags.
 - **Keep**: nightly local backups, Google Drive backup, zip export of any board.
