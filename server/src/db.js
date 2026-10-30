@@ -166,9 +166,25 @@ function num(v, name, { int = false, nullable = true } = {}) {
 const str = (v, max = 2000) => (v === null || v === undefined ? null : String(v).slice(0, max));
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
 
+// Board cover: an icon (emoji) or a few letters, on a background colour with a text colour.
+const HEX = /^#[0-9a-f]{6}$/i;
+function cleanCover(c) {
+  if (!obj(c)) return null;
+  const kind = c.kind === 'text' ? 'text' : c.kind === 'icon' ? 'icon' : null;
+  const value = typeof c.value === 'string' ? [...c.value.trim()].slice(0, kind === 'text' ? 4 : 8).join('') : '';
+  return {
+    kind: value ? kind : null,
+    value: kind ? value : '',
+    bg: HEX.test(c.bg) ? c.bg.toLowerCase() : null,
+    fg: HEX.test(c.fg) ? c.fg.toLowerCase() : null,
+  };
+}
+
 export function createStore(file) {
   const db = openDatabase(file);
   db.exec(SCHEMA);
+  // Columns added after the first release.
+  if (!db.prepare('PRAGMA table_info(files)').all().some((c) => c.name === 'alpha')) db.exec('ALTER TABLE files ADD COLUMN alpha INTEGER');
   const now = () => Date.now();
 
   if (!db.prepare('SELECT 1 FROM boards WHERE id = ?').get('root')) {
@@ -192,7 +208,7 @@ export function createStore(file) {
   function decorate(card) {
     if (card?.type === 'board') {
       const b = getBoard(card.data.boardId);
-      card.child = b ? { id: b.id, title: b.title, color: b.color, count: countCards(b.id) } : null;
+      card.child = b ? { id: b.id, title: b.title, color: b.color, cover: b.data?.cover ?? null, count: countCards(b.id) } : null;
     }
     return card;
   }
@@ -323,7 +339,7 @@ export function createStore(file) {
     const next = {};
     if ('title' in p) next.title = str(p.title, 500) ?? '';
     if ('color' in p) next.color = str(p.color, 50);
-    if (obj(p.data)) next.data = JSON.stringify({ ...board.data, ...p.data });
+    if (obj(p.data)) next.data = JSON.stringify({ ...board.data, ...p.data, ...('cover' in p.data ? { cover: cleanCover(p.data.cover) } : {}) });
     if (!Object.keys(next).length) return board;
     next.updated_at = now();
     const sets = Object.keys(next).map((k) => `${k} = :${k}`).join(', ');
@@ -643,7 +659,8 @@ export function createStore(file) {
 
   // ---- files ----
   const insertFile = (f) =>
-    db.prepare(insertSql('files', ['id', 'name', 'mime', 'ext', 'size', 'width', 'height', 'sha256', 'display_ext', 'created_at'])).run(f);
+    db.prepare(insertSql('files', ['id', 'name', 'mime', 'ext', 'size', 'width', 'height', 'sha256', 'display_ext', 'alpha', 'created_at'])).run({ alpha: null, ...f });
+  const setFileAlpha = (id, alpha) => db.prepare('UPDATE files SET alpha = ? WHERE id = ?').run(alpha ? 1 : 0, id);
   const getFile = (id) => db.prepare('SELECT * FROM files WHERE id = ?').get(id) ?? null;
 
   return {
@@ -664,6 +681,7 @@ export function createStore(file) {
     patchArrow,
     deleteArrow,
     insertFile,
+    setFileAlpha,
     getFile,
     getClip,
     createClip,

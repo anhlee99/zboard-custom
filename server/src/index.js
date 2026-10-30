@@ -256,7 +256,14 @@ async function makeDerivatives(row, isHeic) {
   out.width = turned ? meta.height : meta.width;
   out.height = turned ? meta.width : meta.height;
   await sharp(src).rotate().resize(800, 800, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 80 }).toFile(thumbPath(row.id));
+  out.alpha = await hasTransparency(meta, thumbPath(row.id));
   return out;
+}
+
+// Cut-outs (PNGs with a see-through background) are drawn without a card frame.
+async function hasTransparency(meta, thumb) {
+  if (!meta.hasAlpha) return 0;
+  return (await sharp(thumb).stats()).isOpaque ? 0 : 1;
 }
 
 // f: { path, originalname, mimetype, size }; the temp file at f.path is moved into files/.
@@ -746,6 +753,16 @@ async function rebuildMissingThumbs() {
     }
   }
   if (n) log(`Rebuilt ${n} missing thumbnail(s)`);
+  // Files uploaded before cut-out detection existed.
+  for (const f of store.allFiles()) {
+    if (f.alpha != null || !fs.existsSync(thumbPath(f.id))) continue;
+    try {
+      const src = fs.existsSync(displayPath(f)) ? displayPath(f) : thumbPath(f.id);
+      store.setFileAlpha(f.id, await hasTransparency(await sharp(src).metadata(), thumbPath(f.id)));
+    } catch (e) {
+      log(`transparency check for ${f.id} failed: ${e.message}`);
+    }
+  }
 }
 
 const server = app.listen(PORT);

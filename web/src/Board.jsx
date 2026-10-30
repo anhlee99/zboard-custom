@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, openEvents, uploadFiles } from './api.js';
-import { CardView } from './Cards.jsx';
+import { CardView, youtubeId } from './Cards.jsx';
 import ContextMenu from './ContextMenu.jsx';
+import CoverPicker from './Cover.jsx';
 import SavedPanel, { CLIP_DRAG_TYPE } from './SavedPanel.jsx';
 import { Icon } from './icons.jsx';
 import { COLORS, DEFAULT_W, byId, clamp, htmlText, isImageFile, isUrl, sortBetween, textToHtml, uid } from './util.js';
@@ -69,6 +70,10 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   const [lightbox, setLightbox] = useState(null);
   const [toast, setToast] = useState(null);
   const [colorOpen, setColorOpen] = useState(false);
+  const [coverFor, setCoverFor] = useState(null); // board card whose cover picker is open
+  useEffect(() => {
+    if (coverFor && !sel.has(coverFor)) setCoverFor(null);
+  }, [sel, coverFor]);
   const [ctx, setCtx] = useState(null); // open context menu: { x, y, ids, at }
   const [boardList, setBoardList] = useState([]);
   const [clips, setClips] = useState([]);
@@ -156,7 +161,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         else
           setCards((prev) => {
             const n = { ...prev };
-            for (const c of Object.values(prev)) if (c.child?.id === b.id) n[c.id] = { ...c, child: { ...c.child, title: b.title, color: b.color } };
+            for (const c of Object.values(prev)) if (c.child?.id === b.id) n[c.id] = { ...c, child: { ...c.child, title: b.title, color: b.color, cover: b.data?.cover ?? null } };
             return n;
           });
       },
@@ -493,7 +498,9 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         notify(`No preview: ${e.message}`);
       }
       await creating.current.get(id);
-      patchCards([{ id, data }]);
+      // Videos get room to play.
+      const wide = youtubeId(url) && (S.current.cards[id]?.w ?? DEFAULT_W.link) <= DEFAULT_W.link && !S.current.cards[id]?.column_id;
+      patchCards([{ id, data, ...(wide ? { w: 400 } : {}) }]);
     },
     [patchCards, notify]
   );
@@ -585,6 +592,27 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
 
   // ---------- card actions (passed to cards) ----------
   const stopEdit = useCallback((id) => setEditing((e) => (e === id ? null : e)), []);
+  // Cover of the board a board card opens. Undo puts the old one back.
+  const setCover = useCallback(
+    async function setCover(cardId, cover, { record = true } = {}) {
+      const childId = S.current.cards[cardId]?.child?.id;
+      if (!childId) return;
+      const before = S.current.cards[cardId].child.cover ?? null;
+      setCards((p) => {
+        const n = { ...p };
+        for (const c of Object.values(p)) if (c.child?.id === childId) n[c.id] = { ...c, child: { ...c.child, cover } };
+        return n;
+      });
+      if (record) pushUndo(() => setCover(cardId, before, { record: false }));
+      try {
+        await api('PATCH', `/api/boards/${childId}`, { data: { cover } });
+      } catch (e) {
+        notify(e);
+      }
+    },
+    [pushUndo, notify]
+  );
+
   const actions = useMemo(
     () => ({
       saveData: (id, data) => patchCards([{ id, data }]),
@@ -625,13 +653,14 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
           notify(e);
         }
       },
+      setCover,
       ensureFile: async (fileId) => {
         if (S.current.files[fileId]) return;
         const r = await api('GET', `/api/files/${fileId}/info`).catch(() => null);
         if (r) setFiles((f) => ({ ...f, [fileId]: r.file }));
       },
     }),
-    [patchCards, deleteCards, setLink, stopEdit, notify]
+    [patchCards, deleteCards, setLink, stopEdit, notify, setCover]
   );
 
   const openCard = useCallback((c) => {
@@ -919,6 +948,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     return [
       single && { label: opens ? 'Open' : 'Edit', icon: opens ? 'open' : 'edit', shortcut: opens ? 'Dbl-click' : 'Enter', onClick: () => (opens ? openCard(single) : startEdit(single.id)) },
       single && opens && single.type !== 'image' && { label: single.type === 'board' ? 'Rename' : 'Edit link', icon: 'edit', shortcut: 'Enter', onClick: () => startEdit(single.id) },
+      single?.type === 'board' && { label: 'Change cover', icon: 'palette', onClick: () => setCoverFor(single.id) },
       single && { separator: true },
       { label: 'Copy' + many, icon: 'copy', shortcut: 'Ctrl+C', onClick: () => { const c = copySelection(false, ids); if (c) toSystemClipboard(c); } }, // prettier-ignore
       { label: 'Cut' + many, icon: 'cut', shortcut: 'Ctrl+X', onClick: () => { const c = copySelection(true, ids); if (c) toSystemClipboard(c); } }, // prettier-ignore
@@ -1032,6 +1062,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   const beginRef = useRef(null);
   beginRef.current = (g0) => {
     gesture.current = g0;
+    canvasRef.current?.classList.add('gesturing'); // lets drags pass over playing videos
       const move = (ev) => {
         pointer.current = { x: ev.clientX, y: ev.clientY };
         const g = gesture.current;
@@ -1103,6 +1134,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       };
 
       const up = (ev) => {
+        canvasRef.current?.classList.remove('gesturing');
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
         window.removeEventListener('pointercancel', up);
@@ -1325,7 +1357,8 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         const c = S.current.cards[el.dataset.cardId];
         if (!c || S.current.editing === c.id) return;
         if (e.target.closest('input, textarea, button')) return;
-        if (c.type === 'board' || c.type === 'image') openCard(c);
+        if (c.type === 'board' && e.target.closest('.board-title')) startEdit(c.id); // double-click the name to rename
+        else if (c.type === 'board' || c.type === 'image') openCard(c);
         else if (c.type === 'link' && c.data.url) openCard(c);
         else startEdit(c.id);
         return;
@@ -1622,6 +1655,17 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     );
   }, [arrows, rectsVersion, tempArrow, selArrow]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Cover picker sits under its board card, kept on screen.
+  const coverCard = coverFor && cards[coverFor]?.child?.id ? cards[coverFor] : null;
+  let coverAt = null;
+  if (coverCard) {
+    const r = rectOf(coverCard);
+    coverAt = {
+      x: clamp(r.x * view.s + view.x, 8, Math.max(8, canvasSize.w - 300)),
+      y: clamp((r.y + r.h) * view.s + view.y + 8, 8, Math.max(8, canvasSize.h - 420)),
+    };
+  }
+
   // Screen box around the selection, for the floating toolbar and the format bar.
   let selBox = null;
   if (sel.size && !dragIds.size && !box) {
@@ -1713,6 +1757,11 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
                 </div>
               )}
             </div>
+            {single?.type === 'board' && (
+              <button className="icon-btn" onClick={() => setCoverFor((f) => (f ? null : single.id))} data-tip="Cover: icon, text and colour" aria-label="Cover">
+                <Icon name="image" size={18} />
+              </button>
+            )}
             {single && ['board', 'link', 'image'].includes(single.type) && (
               <button className="icon-btn" onClick={() => openCard(single)} data-tip="Open" aria-label="Open">
                 <Icon name="open" size={18} />
@@ -1750,6 +1799,12 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             <button onMouseDown={fmt('insertUnorderedList')} data-tip="Bullets" aria-label="Bullets">
               <Icon name="list" size={16} />
             </button>
+          </div>
+        )}
+
+        {coverCard && (
+          <div className="cover-anchor" style={{ left: coverAt.x, top: coverAt.y }}>
+            <CoverPicker key={coverCard.id} cover={coverCard.child?.cover} title={coverCard.child?.title} onChange={(cv) => setCover(coverCard.id, cv)} onClose={() => setCoverFor(null)} />
           </div>
         )}
 

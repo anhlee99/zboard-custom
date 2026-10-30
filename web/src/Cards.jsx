@@ -1,6 +1,7 @@
-import { Fragment, memo, useEffect, useLayoutEffect, useRef } from 'react';
+import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DEFAULT_W, hostOf, sanitize, uid } from './util.js';
 import { Icon } from './icons.jsx';
+import { CoverTile } from './Cover.jsx';
 
 function placeCaretAtEnd(el) {
   const range = document.createRange();
@@ -210,6 +211,8 @@ function LinkBody({ card, editing, actions, lowRes }) {
       </div>
     );
   }
+  const video = youtubeId(d.url);
+  if (video) return <VideoBody card={card} video={video} lowRes={lowRes} />;
   return (
     <div className="link-body">
       {d.image && <img className="link-img" src={`/files/${d.image}/${lowRes ? 'mini' : 'thumb'}`} alt="" draggable={false} loading="lazy" decoding="async" />}
@@ -222,13 +225,72 @@ function LinkBody({ card, editing, actions, lowRes }) {
   );
 }
 
+// YouTube links: watch, youtu.be, shorts, live and embed URLs. Returns { id, start } or null.
+export function youtubeId(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = u.hostname.replace(/^(www|m|music)\./, '');
+  let id = null;
+  if (host === 'youtu.be') id = u.pathname.slice(1).split('/')[0];
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    if (u.pathname === '/watch') id = u.searchParams.get('v');
+    else id = u.pathname.match(/^\/(?:shorts|live|embed)\/([^/?#]+)/)?.[1] ?? null;
+  }
+  if (!id || !/^[\w-]{6,20}$/.test(id)) return null;
+  const t = u.searchParams.get('t') || u.searchParams.get('start') || '';
+  const m = t.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
+  const start = m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0;
+  return { id, start };
+}
+
+// Plays inside the card. Drag the card by its title strip while the video is showing.
+function VideoBody({ card, video, lowRes }) {
+  const d = card.data;
+  const [playing, setPlaying] = useState(false);
+  const thumb = d.image ? `/files/${d.image}/${lowRes ? 'mini' : 'thumb'}` : `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`;
+  return (
+    <div className="link-body video-body">
+      <div className="video-frame">
+        {playing ? (
+          <iframe
+            src={`https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&rel=0${video.start ? '&start=' + video.start : ''}`}
+            title={d.title || 'YouTube video'}
+            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+            allowFullScreen
+          />
+        ) : (
+          <>
+            <img src={thumb} alt="" draggable={false} loading="lazy" decoding="async" />
+            <button className="video-play" onClick={() => setPlaying(true)} aria-label="Play video" data-tip="Play here">
+              <Icon name="play" size={22} />
+            </button>
+          </>
+        )}
+      </div>
+      <div className="link-meta">
+        <div className="link-title">{d.loading ? 'Fetching preview…' : d.title || d.url}</div>
+        <div className="link-site video-site">
+          <span>YouTube</span>
+          {playing && (
+            <button className="video-stop" onClick={() => setPlaying(false)}>
+              Stop
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BoardBody({ card, editing, actions }) {
   const child = card.child;
   return (
     <div className="board-body">
-      <div className="board-icon">
-        <Icon name="board" size={28} />
-      </div>
+      <CoverTile cover={child?.cover} fallback={<Icon name="board" size={28} />} />
       {editing ? (
         <input
           className="board-title-input"
@@ -299,7 +361,8 @@ const BODIES = { note: NoteBody, todo: TodoBody, image: ImageBody, link: LinkBod
 export const CardView = memo(function CardView(props) {
   const { card, inColumn, selected, editing, dragging, cut } = props;
   const style = inColumn ? undefined : { left: card.x, top: card.y, width: card.w || DEFAULT_W[card.type], zIndex: card.z };
-  const cls = ['card', `card-${card.type}`, selected && 'selected', editing && 'editing', dragging && 'dragging', cut && 'cut', card.color && `c-${card.color}`, inColumn && 'in-column']
+  const cutout = card.type === 'image' && props.file?.alpha === 1; // see-through PNG: no card frame
+  const cls = ['card', `card-${card.type}`, cutout && 'cutout', selected && 'selected', editing && 'editing', dragging && 'dragging', cut && 'cut', card.color && `c-${card.color}`, inColumn && 'in-column']
     .filter(Boolean)
     .join(' ');
   const Body = card.type === 'column' ? ColumnBody : BODIES[card.type];

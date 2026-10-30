@@ -51,6 +51,7 @@ export default function App() {
   const [menu, setMenu] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
   const [clipCount, setClipCount] = useState(0);
+  const [renaming, setRenaming] = useState(false);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -78,6 +79,8 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  useEffect(() => setRenaming(false), [route.board]);
+
   useEffect(() => {
     document.title = info.board && info.board.id !== 'root' ? `${info.board.title} · ZBoard` : 'ZBoard';
   }, [info.board]);
@@ -86,6 +89,13 @@ export default function App() {
   if (auth === 'out') return <Login onDone={() => setAuth('in')} />;
 
   const crumbs = info.breadcrumbs;
+  async function renameBoard(id, title) {
+    setRenaming(false);
+    const old = crumbs.find((b) => b.id === id)?.title;
+    if (!title || title === old) return;
+    setInfo((inf) => ({ board: inf.board?.id === id ? { ...inf.board, title } : inf.board, breadcrumbs: inf.breadcrumbs.map((b) => (b.id === id ? { ...b, title } : b)) }));
+    await api('PATCH', `/api/boards/${id}`, { title }).catch(() => setInfo((inf) => ({ ...inf, breadcrumbs: inf.breadcrumbs.map((b) => (b.id === id ? { ...b, title: old } : b)) })));
+  }
   async function logout() {
     await api('POST', '/api/logout').catch(() => {});
     setAuth('out');
@@ -101,9 +111,33 @@ export default function App() {
           {crumbs.map((b, i) => (
             <span key={b.id} className="crumb-wrap">
               {i > 0 && <span className="crumb-sep">/</span>}
-              <a href={`#/b/${b.id}`} className={i === crumbs.length - 1 ? 'crumb current' : 'crumb'} data-drop-board={i < crumbs.length - 1 ? b.id : undefined}>
-                {b.title || 'Untitled'}
-              </a>
+              {i === crumbs.length - 1 && renaming ? (
+                <input
+                  className="crumb-input"
+                  autoFocus
+                  defaultValue={b.title}
+                  aria-label="Board name"
+                  onFocus={(e) => e.target.select()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.target.blur();
+                    if (e.key === 'Escape') {
+                      e.target.value = b.title;
+                      e.target.blur();
+                    }
+                  }}
+                  onBlur={(e) => renameBoard(b.id, e.target.value.trim())}
+                />
+              ) : (
+                <a
+                  href={`#/b/${b.id}`}
+                  className={i === crumbs.length - 1 ? 'crumb current' : 'crumb'}
+                  data-drop-board={i < crumbs.length - 1 ? b.id : undefined}
+                  data-tip={i === crumbs.length - 1 ? 'Double-click to rename' : undefined}
+                  onDoubleClick={i === crumbs.length - 1 ? () => setRenaming(true) : undefined}
+                >
+                  {b.title || 'Untitled'}
+                </a>
+              )}
             </span>
           ))}
         </nav>
