@@ -6,6 +6,9 @@ import { strokePath } from './ink.js';
 import { LabelChips } from './Labels.jsx';
 import { rotatedImgStyle } from './ImageEditor.jsx';
 
+// lowRes is 'thumb' | 'mini' | 'micro' (older code passed true/false).
+const sizeName = (v) => (v === true ? 'mini' : v === false || !v ? 'thumb' : v);
+
 function placeCaretAtEnd(el) {
   const range = document.createRange();
   range.selectNodeContents(el);
@@ -173,7 +176,7 @@ function ImageBody({ card, editing, selected, inColumn, file, actions, lowRes })
   const c = known && d.crop ? d.crop : { x: 0, y: 0, w: 1, h: 1 };
   const edited = known && (rot || d.crop);
   const ratio = known ? `${c.w * rw} / ${c.h * rh}` : undefined;
-  const src = fileId && `/files/${fileId}/${lowRes ? 'mini' : 'thumb'}`;
+  const src = fileId && `/files/${fileId}/${sizeName(lowRes)}`;
   const img = src && (
     <img
       src={src}
@@ -187,7 +190,7 @@ function ImageBody({ card, editing, selected, inColumn, file, actions, lowRes })
   );
   return (
     <>
-      <div className="img-wrap" style={{ aspectRatio: ratio }}>
+      <div className="img-wrap" style={{ aspectRatio: ratio, backgroundColor: !file?.alpha && file?.color ? file.color : undefined }}>
         {edited ? (
           <div className="img-stage" style={{ width: `${100 / c.w}%`, height: `${100 / c.h}%`, left: `${(-c.x / c.w) * 100}%`, top: `${(-c.y / c.h) * 100}%` }}>
             {img}
@@ -269,7 +272,7 @@ function LinkBody({ card, editing, actions, lowRes }) {
   if (video) return <VideoBody card={card} video={video} lowRes={lowRes} />;
   return (
     <div className="link-body">
-      {d.image && <img className="link-img" src={`/files/${d.image}/${lowRes ? 'mini' : 'thumb'}`} alt="" draggable={false} loading="lazy" decoding="async" />}
+      {d.image && <img className="link-img" src={`/files/${d.image}/${sizeName(lowRes)}`} alt="" draggable={false} loading="lazy" decoding="async" />}
       <div className="link-meta">
         <div className="link-title">{d.loading ? 'Fetching preview…' : d.title || d.url}</div>
         {d.description && <div className="link-desc">{d.description}</div>}
@@ -305,7 +308,7 @@ export function youtubeId(url) {
 function VideoBody({ card, video, lowRes }) {
   const d = card.data;
   const [playing, setPlaying] = useState(false);
-  const thumb = d.image ? `/files/${d.image}/${lowRes ? 'mini' : 'thumb'}` : `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`;
+  const thumb = d.image ? `/files/${d.image}/${sizeName(lowRes)}` : `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`;
   return (
     <div className="link-body video-body">
       <div className="video-frame">

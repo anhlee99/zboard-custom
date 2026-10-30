@@ -91,8 +91,8 @@ await sleep(500);
 const zoom = Number((await page.locator('.zoom-pct').textContent()).replace('%', ''));
 await page.waitForFunction(() => document.querySelectorAll('.card-image img').length >= 1000, null, { timeout: 15000 }).catch(() => {});
 const all = await visibleImages();
-const minis = await page.evaluate(() => [...document.querySelectorAll('.card-image img')].filter((i) => i.src.endsWith('/mini')).length);
-check(zoom < 45 && all === 1000 && minis === all, `zoomed out to ${zoom}%: all ${all} cards shown with 256 px minis (${minis})`);
+const minis = await page.evaluate(() => [...document.querySelectorAll('.card-image img')].filter((i) => /\/(mini|micro)$/.test(i.src)).length);
+check(zoom < 45 && all === 1000 && minis === all, `zoomed out to ${zoom}%: all ${all} cards shown with small previews (${minis})`);
 await sleep(2500); // let the minis arrive
 const far = await framesWhilePanning();
 console.log('  zoomed-out pan:', JSON.stringify(far));

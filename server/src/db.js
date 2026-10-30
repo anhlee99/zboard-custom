@@ -237,7 +237,9 @@ export function createStore(file) {
   const db = openDatabase(file);
   db.exec(SCHEMA);
   // Columns added after the first release.
-  if (!db.prepare('PRAGMA table_info(files)').all().some((c) => c.name === 'alpha')) db.exec('ALTER TABLE files ADD COLUMN alpha INTEGER');
+  const fileCols = db.prepare('PRAGMA table_info(files)').all().map((c) => c.name);
+  if (!fileCols.includes('alpha')) db.exec('ALTER TABLE files ADD COLUMN alpha INTEGER');
+  if (!fileCols.includes('color')) db.exec('ALTER TABLE files ADD COLUMN color TEXT');
   const now = () => Date.now();
 
   if (!db.prepare('SELECT 1 FROM boards WHERE id = ?').get('root')) {
@@ -717,8 +719,9 @@ export function createStore(file) {
 
   // ---- files ----
   const insertFile = (f) =>
-    db.prepare(insertSql('files', ['id', 'name', 'mime', 'ext', 'size', 'width', 'height', 'sha256', 'display_ext', 'alpha', 'created_at'])).run({ alpha: null, ...f });
+    db.prepare(insertSql('files', ['id', 'name', 'mime', 'ext', 'size', 'width', 'height', 'sha256', 'display_ext', 'alpha', 'color', 'created_at'])).run({ alpha: null, color: null, ...f });
   const setFileAlpha = (id, alpha) => db.prepare('UPDATE files SET alpha = ? WHERE id = ?').run(alpha ? 1 : 0, id);
+  const setFileColor = (id, color) => db.prepare('UPDATE files SET color = ? WHERE id = ?').run(color, id);
   const getFile = (id) => db.prepare('SELECT * FROM files WHERE id = ?').get(id) ?? null;
 
   return {
@@ -740,6 +743,7 @@ export function createStore(file) {
     deleteArrow,
     insertFile,
     setFileAlpha,
+    setFileColor,
     getFile,
     getClip,
     createClip,

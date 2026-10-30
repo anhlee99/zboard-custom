@@ -1734,8 +1734,10 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   // Far out, images load the 256 px mini instead of the 800 px thumbnail.
   // Swapping every image between thumbnail and mini mid-zoom reloads hundreds at once (measured:
   // switching on the way out doubled the worst zoom frame), so the switch waits for the zoom to settle.
-  const lowRes = settledS < 0.45;
-  const lowResNow = view.s < 0.45; // for cards that appear mid-zoom: right size straight away
+  // Image size by zoom: 800 px thumbnail, 256 px mini below 45%, 96 px micro below 20%.
+  const sizeFor = (s) => (s < 0.2 ? 'micro' : s < 0.45 ? 'mini' : 'thumb');
+  const lowRes = sizeFor(settledS);
+  const lowResNow = sizeFor(view.s); // for cards that appear mid-zoom: right size straight away
 
   // Watch card sizes. Keyed on which cards are rendered, not their positions, so a drag
   // does not re-subscribe every card on every mouse move.
