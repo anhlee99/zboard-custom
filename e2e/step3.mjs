@@ -90,8 +90,10 @@ await touch('touchStart', [inCol]);
 await touch('touchEnd', []);
 await sleep(300);
 check((await page.locator('.card-note.selected').count()) === 1, 'tap selects a card');
-const fb = await page.locator('.float-bar').boundingBox();
-check(fb && fb.x >= 0 && fb.x + fb.width <= 390, 'floating toolbar fits a 390 px screen', JSON.stringify(fb));
+await sleep(350);
+const fb = await page.locator('.item-actions').boundingBox();
+const more = await page.locator('.item-actions [aria-label="More actions"]').boundingBox();
+check(fb && fb.x >= 0 && fb.x + fb.width <= 390 && more && more.y > 700, 'tap: the bottom bar flips to the card actions', JSON.stringify({ fb, more }));
 
 // --- double-tap edits a note; format bar fits ---
 await touch('touchStart', [inCol]);

@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS drive_files (
   uploaded_at INTEGER NOT NULL
 );
 `;
-const SEARCH_VERSION = '2'; // bump to re-index everything on the next start
+const SEARCH_VERSION = '3'; // bump to re-index everything on the next start
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 const decodeEntities = (s) =>
@@ -140,9 +140,12 @@ export function cardText(c) {
 }
 
 const TAG_RE = /(?:^|[^\p{L}\p{N}_&#/])#([\p{L}\p{N}_-]{1,50})/gu;
+// A label as a #tag: lower case, spaces as dashes.
+export const labelTag = (label) => String(label).trim().toLowerCase().replace(/\s+/g, '-');
+
 export function tagsOf(c) {
-  if (!['note', 'todo', 'image'].includes(c.type)) return [];
-  return [...new Set([...cardText(c).matchAll(TAG_RE)].map((m) => m[1].toLowerCase()))];
+  const fromText = ['note', 'todo', 'image'].includes(c.type) ? [...cardText(c).matchAll(TAG_RE)].map((m) => m[1].toLowerCase()) : [];
+  return [...new Set([...fromText, ...(c.data?.labels || []).map(labelTag)])];
 }
 
 // Each word becomes a prefix match; all words must match.
@@ -187,12 +190,31 @@ function cleanStrokes(list) {
   });
 }
 const size1 = (v) => Math.min(100000, Math.max(1, Number(v) || 1));
+// Labels: up to 12 short names per card.
+const cleanLabels = (v) =>
+  [...new Set((Array.isArray(v) ? v : []).map((x) => String(x).trim().replace(/\s+/g, ' ').slice(0, 30)).filter(Boolean))].slice(0, 12);
+// Image crop is a box in fractions of the (rotated) picture; rotation is a quarter turn.
+function cleanCrop(c) {
+  if (!obj(c)) return null;
+  const f = (v) => Math.min(1, Math.max(0, Number(v) || 0));
+  const x = f(c.x);
+  const y = f(c.y);
+  const w = Math.min(1 - x, Math.max(0.02, f(c.w)));
+  const h = Math.min(1 - y, Math.max(0.02, f(c.h)));
+  return x < 0.001 && y < 0.001 && w > 0.999 && h > 0.999 ? null : { x, y, w, h };
+}
 // Drawing cards hold strokes; images may carry strokes drawn over them (data.ink).
 function cleanData(type, data) {
-  if (type === 'drawing') return { strokes: cleanStrokes(data.strokes), vw: size1(data.vw), vh: size1(data.vh) };
-  if (type === 'image' && 'ink' in data) {
-    const strokes = obj(data.ink) ? cleanStrokes(data.ink.strokes) : [];
-    return { ...data, ink: strokes.length ? { strokes, vw: size1(data.ink.vw), vh: size1(data.ink.vh) } : null };
+  const labels = 'labels' in data ? { labels: cleanLabels(data.labels) } : {};
+  if (type === 'drawing') return { strokes: cleanStrokes(data.strokes), vw: size1(data.vw), vh: size1(data.vh), ...labels };
+  data = { ...data, ...labels };
+  if (type === 'image') {
+    if ('ink' in data) {
+      const strokes = obj(data.ink) ? cleanStrokes(data.ink.strokes) : [];
+      data.ink = strokes.length ? { strokes, vw: size1(data.ink.vw), vh: size1(data.ink.vh) } : null;
+    }
+    if ('crop' in data) data.crop = cleanCrop(data.crop);
+    if ('rotate' in data) data.rotate = [0, 90, 180, 270].includes(Number(data.rotate)) ? Number(data.rotate) : 0;
   }
   return data;
 }
@@ -293,7 +315,7 @@ export function createStore(file) {
     if (!c) return;
     // Images are also found by their file name.
     const name = c.type === 'image' && c.data?.fileId ? db.prepare('SELECT name FROM files WHERE id = ?').get(c.data.fileId)?.name : null;
-    const text = [cardText(c), name].filter(Boolean).join('\n');
+    const text = [cardText(c), name, ...(c.data?.labels || [])].filter(Boolean).join('\n');
     if (text) db.prepare("INSERT INTO search_fts (ref, board_id, kind, text) VALUES (?, ?, 'card', ?)").run(id, c.board_id, text);
     for (const tag of tagsOf(c)) db.prepare('INSERT OR IGNORE INTO card_tags (card_id, board_id, tag) VALUES (?, ?, ?)').run(id, c.board_id, tag);
   }
@@ -347,6 +369,9 @@ export function createStore(file) {
       .map((r) => cardHit(r.card_id))
       .filter(Boolean);
 
+  // Labels in use anywhere, most used first (for the label picker).
+  const listLabels = () =>
+    db.prepare("SELECT j.value AS label, COUNT(*) AS count FROM cards, json_each(cards.data, '$.labels') AS j GROUP BY j.value ORDER BY count DESC, j.value COLLATE NOCASE LIMIT 300").all();
   const listTags = () => db.prepare('SELECT tag, COUNT(*) AS count FROM card_tags GROUP BY tag ORDER BY count DESC, tag LIMIT 300').all();
 
   function stats() {
@@ -731,6 +756,7 @@ export function createStore(file) {
     search,
     byTag,
     listTags,
+    listLabels,
     stats,
     close: () => db.close(),
   };

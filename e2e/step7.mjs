@@ -36,14 +36,18 @@ async function framesWhilePanning(ms = 2500) {
         let last = 0;
         let end = 0;
         let i = 0;
+        let net = 0; // how far the pan has gone, so it can come back at the end
         function tick(t) {
           if (last) frames.push(t - last);
           last = t;
           if (!end) end = t + ms;
           const dir = Math.floor(i++ / 60) % 2 ? -1 : 1;
+          net += dir;
           canvas.dispatchEvent(new WheelEvent('wheel', { deltaX: 14 * dir, deltaY: 9 * dir, bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
           if (t < end) requestAnimationFrame(tick);
           else {
+            // Return to where it started, whatever the frame rate was.
+            canvas.dispatchEvent(new WheelEvent('wheel', { deltaX: -14 * net, deltaY: -9 * net, bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
             const sorted = [...frames].sort((a, b) => a - b);
             const avg = frames.reduce((a, b) => a + b, 0) / frames.length;
             resolve({ fps: Math.round(1000 / avg), p95: Math.round(sorted[Math.floor(sorted.length * 0.95)]), max: Math.round(sorted.at(-1)), frames: frames.length });

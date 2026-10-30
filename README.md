@@ -6,6 +6,12 @@ things from any page, and a terminal client.
 
 - **Canvas**: notes, to-dos, images, links (YouTube plays in place), boards with icon covers, columns,
   drawings, styled arrows, colours, undo, live sync between devices.
+- **Actions**: selecting a card flips the left toolbar (the bottom bar on a phone) to that card's actions;
+  click empty board or Done to flip back. Images: Draw on, Edit (crop and rotate, kept on the card,
+  the file is untouched), Caption, Color, Labels, More (open, download original, replace image,
+  duplicate, copy, front/back, delete). Arrows: colour, start/end heads, label, dashed, weight.
+- **Labels**: coloured name chips on any card, picked or created from Labels. Search finds them, and each
+  label is also a #tag; click a chip to see every card with it.
 - **Draw**: the Draw tool (left toolbar) opens a drawing layer: pen (pressure with a stylus), select and
   move strokes, eraser, colours, four sizes, undo/redo (Ctrl+Z / Ctrl+Y), Save or Discard (Esc).
   Saved strokes become a drawing card where you drew them; double-click it to draw on it again. Keys in

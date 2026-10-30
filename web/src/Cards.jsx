@@ -3,6 +3,8 @@ import { DEFAULT_W, hostOf, sanitize, uid } from './util.js';
 import { Icon } from './icons.jsx';
 import { CoverTile } from './Cover.jsx';
 import { strokePath } from './ink.js';
+import { LabelChips } from './Labels.jsx';
+import { rotatedImgStyle } from './ImageEditor.jsx';
 
 function placeCaretAtEnd(el) {
   const range = document.createRange();
@@ -161,12 +163,39 @@ function ImageBody({ card, editing, selected, inColumn, file, actions, lowRes })
   useEffect(() => {
     if (fileId && !file) actions.ensureFile(fileId);
   }, [fileId, file, actions]);
-  const ratio = file?.width && file?.height ? `${file.width} / ${file.height}` : undefined;
   const site = d.source_url ? hostOf(d.source_url) : '';
+  // Crop and rotation are drawn, never baked into the file: a stage the size of the whole
+  // (rotated) picture, shifted so the crop box fills the frame.
+  const rot = d.rotate || 0;
+  const known = file?.width && file?.height;
+  const rw = known ? (rot % 180 ? file.height : file.width) : 1;
+  const rh = known ? (rot % 180 ? file.width : file.height) : 1;
+  const c = known && d.crop ? d.crop : { x: 0, y: 0, w: 1, h: 1 };
+  const edited = known && (rot || d.crop);
+  const ratio = known ? `${c.w * rw} / ${c.h * rh}` : undefined;
+  const src = fileId && `/files/${fileId}/${lowRes ? 'mini' : 'thumb'}`;
+  const img = src && (
+    <img
+      src={src}
+      alt={d.caption || d.alt || file?.name || ''}
+      title={d.alt || undefined}
+      draggable={false}
+      loading="lazy"
+      decoding="async"
+      style={edited ? rotatedImgStyle(rot, rw, rh) : undefined}
+    />
+  );
   return (
     <>
       <div className="img-wrap" style={{ aspectRatio: ratio }}>
-        {fileId && <img src={`/files/${fileId}/${lowRes ? 'mini' : 'thumb'}`} alt={d.caption || d.alt || file?.name || ''} title={d.alt || undefined} draggable={false} loading="lazy" decoding="async" />}
+        {edited ? (
+          <div className="img-stage" style={{ width: `${100 / c.w}%`, height: `${100 / c.h}%`, left: `${(-c.x / c.w) * 100}%`, top: `${(-c.y / c.h) * 100}%` }}>
+            {img}
+          </div>
+        ) : (
+          img
+        )}
+        <LabelChips labels={d.labels} />
         {d.ink?.strokes?.length > 0 && (
           <svg className="img-ink" viewBox={`0 0 ${d.ink.vw || 1000} ${d.ink.vh || 1000}`} preserveAspectRatio="none">
             {d.ink.strokes.map((st, i) => (
@@ -406,6 +435,7 @@ export const CardView = memo(function CardView(props) {
   return (
     <div className={cls} style={style} data-card-id={card.id} data-drop-board={card.type === 'board' ? card.data.boardId : undefined}>
       {Body && <Body {...props} />}
+      {card.type !== 'image' && card.type !== 'column' && <LabelChips labels={card.data.labels} />}
       {selected && !inColumn && !editing && (
         <>
           <div className="handle handle-resize" data-handle="resize" data-tip="Resize" />

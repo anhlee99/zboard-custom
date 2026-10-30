@@ -1,9 +1,12 @@
 // Step 2 checks: web canvas. Needs a server on ZB_URL started from an empty data dir.
-import { api, BASE, center, check, done, drag, launch, login, PNG, sleep, solidPng } from './lib.mjs';
+import { api, BASE, center, check, done, drag, launch, login, PNG, showTools, sleep, solidPng } from './lib.mjs';
 
 const browser = await launch();
 const { page, context } = await login(browser);
-const tool = (label) => page.locator(`.tool[aria-label="${label}"]`);
+const tool = async (label) => {
+  await showTools(page);
+  return page.locator(`.tb-tools .tool[aria-label="${label}"]`);
+};
 const canvasBox = await page.locator('.canvas').boundingBox();
 const at = (x, y) => ({ x: canvasBox.x + x, y: canvasBox.y + y });
 const cardsOf = (type) => page.locator(`.world > .card-${type}`);
@@ -16,6 +19,7 @@ await page.keyboard.press('Escape');
 await drag(page, await center(tool('To-do')), at(450, 120));
 await page.keyboard.type('Groceries');
 await page.keyboard.press('Enter');
+await page.waitForFunction(() => document.activeElement?.classList.contains('todo-text'));
 await page.keyboard.type('milk');
 await page.mouse.click(at(1100, 700).x, at(1100, 700).y);
 

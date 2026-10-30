@@ -1,6 +1,6 @@
 // Drawing: pen, colour, size, eraser, select/move, undo, save as a card, edit again, resize,
 // discard, phone-size toolbar and the terminal render. Needs a server on ZB_URL with an empty data dir.
-import { api, BASE, check, done, drag, launch, login, sleep, solidPng } from './lib.mjs';
+import { api, BASE, check, done, drag, launch, login, showTools, sleep, solidPng } from './lib.mjs';
 
 await api('GET', '/api/me');
 const holder = await api('POST', '/api/boards/root/cards', { cards: [{ type: 'board', x: 60, y: 60, title: 'Sketches' }] });
@@ -19,7 +19,8 @@ const drawings = () => api('GET', `/api/boards/${boardId}`).then((b) => b.cards.
 const bar = (label) => page.locator(`.draw-bar [aria-label="${label}"]`);
 
 // Open, draw two strokes, change colour and size for the second.
-await page.click('.toolbar [aria-label="Draw"]');
+await showTools(page);
+await page.click('.tb-tools [aria-label="Draw"]');
 await page.waitForSelector('.draw-layer');
 check((await page.locator('.draw-save').isDisabled()) && (await page.locator('.draw-cancel').textContent()) === 'Cancel', 'draw mode opens with Save off and Cancel');
 await drag(page, at(300, 300), at(500, 360), 20);
@@ -68,11 +69,13 @@ check((await page.locator('.card-drawing svg path').count()) === 2, 'card shows 
 await page.keyboard.press('Control+z');
 await sleep(500);
 check((await drawings()).length === 0, 'board undo removes the new drawing');
-await page.click('.toolbar [aria-label="Undo"]').catch(() => {});
+await showTools(page);
+await page.click('.tb-tools [aria-label="Undo"]').catch(() => {});
 await page.goto(`${BASE}/#/b/${boardId}`);
 
 // Draw again, save, then edit it: double-click opens it with its strokes.
-await page.click('.toolbar [aria-label="Draw"]');
+await showTools(page);
+await page.click('.tb-tools [aria-label="Draw"]');
 await bar('Pen').click();
 await drag(page, at(300, 300), at(560, 300), 20);
 await page.click('.draw-save');
@@ -96,7 +99,8 @@ await sleep(300);
 check((await drawings())[0].data.strokes.length === 2 && (await page.locator('.draw-layer').count()) === 0, 'Discard keeps the saved drawing as it was');
 
 // Escape also leaves without saving.
-await page.click('.toolbar [aria-label="Draw"]');
+await showTools(page);
+await page.click('.tb-tools [aria-label="Draw"]');
 await drag(page, at(700, 600), at(800, 620), 10);
 await page.keyboard.press('Escape');
 check((await page.locator('.draw-layer').count()) === 0 && (await drawings()).length === 1, 'Escape leaves without saving');
@@ -113,7 +117,8 @@ check(box2.width > w0 + 100 && Math.abs(svgBox.width - box2.width) < 2, 'resizin
 
 // Board keys stay quiet while drawing: Delete does not delete selected cards.
 await page.locator('.card-drawing').click();
-await page.click('.toolbar [aria-label="Draw"]');
+await showTools(page);
+await page.click('.tb-tools [aria-label="Draw"]');
 await page.keyboard.press('Delete');
 await page.keyboard.press('Escape');
 check((await drawings()).length === 1, 'board shortcuts are off while drawing');
@@ -131,7 +136,8 @@ const bd = bad.cards[0].data;
 check(bd.strokes.length === 0 && bd.vw === 1, 'bad strokes are dropped by the server', JSON.stringify(bd));
 
 // Size slider and [ ] keys.
-await page.click('.toolbar [aria-label="Draw"]');
+await showTools(page);
+await page.click('.tb-tools [aria-label="Draw"]');
 await bar('Stroke size').click();
 await page.locator('.draw-size-pop input[type=range]').fill('10');
 const n0 = Number(await page.locator('.draw-size-num').textContent());
@@ -154,7 +160,7 @@ await page.waitForSelector(`[data-card-id="${imgCard.id}"] img`);
 await sleep(300);
 const imgEl = page.locator(`[data-card-id="${imgCard.id}"]`);
 await imgEl.locator('.img-wrap').click();
-await page.click('.float-bar [aria-label="Draw on image"]');
+await page.click('.item-actions [aria-label="Draw on image"]');
 await page.waitForSelector('.draw-layer.on-image');
 check((await page.locator('.draw-frame').count()) === 1, 'draw on image: the picture is framed, the rest dimmed');
 const wb = await imgEl.locator('.img-wrap').boundingBox();
@@ -174,7 +180,7 @@ const wrap2 = await imgEl.locator('.img-wrap').boundingBox();
 const ink2 = await imgEl.locator('.img-ink').boundingBox();
 check(wrap2.width > wb.width + 80 && Math.abs(ink2.width - wrap2.width) < 2 && Math.abs(ink2.height - wrap2.height) < 2, 'resizing the image scales its drawing');
 // Reopen, erase it all, save: the ink goes away; board undo brings it back.
-await page.click('.float-bar [aria-label="Draw on image"]');
+await page.click('.item-actions [aria-label="Draw on image"]');
 await page.waitForSelector('.draw-layer.on-image');
 check((await page.locator('.draw-svg path:not(.draw-dim)').count()) === 1, 'reopening shows the existing strokes');
 await bar('Eraser').click();

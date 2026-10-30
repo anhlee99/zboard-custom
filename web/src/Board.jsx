@@ -3,6 +3,8 @@ import { api, openEvents, uploadFiles } from './api.js';
 import { CardView, youtubeId } from './Cards.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import CoverPicker from './Cover.jsx';
+import ImageEditor from './ImageEditor.jsx';
+import LabelPicker from './Labels.jsx';
 import DrawLayer from './Draw.jsx';
 import { inkBounds, mapStrokes } from './ink.js';
 import SavedPanel, { CLIP_DRAG_TYPE } from './SavedPanel.jsx';
@@ -89,9 +91,15 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   const [colorOpen, setColorOpen] = useState(false);
   const [coverFor, setCoverFor] = useState(null); // board card whose cover picker is open
   const [drawing, setDrawing] = useState(null); // { cardId, strokes } while drawing mode is open
+  const [pop, setPop] = useState(null); // open popover of the action panel: { kind, top, left, bottom }
+  const [imgEdit, setImgEdit] = useState(null); // image card in the crop/rotate editor
+  const wrapRef = useRef(null);
+  const replaceInput = useRef(null);
+  const replaceFor = useRef(null);
   useEffect(() => {
     if (coverFor && !sel.has(coverFor)) setCoverFor(null);
   }, [sel, coverFor]);
+  useEffect(() => setPop(null), [sel, selArrow]);
   const [ctx, setCtx] = useState(null); // open context menu: { x, y, ids, at }
   const [boardList, setBoardList] = useState([]);
   const [clips, setClips] = useState([]);
@@ -659,6 +667,39 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       }
     },
     [patchCards, createCards, deleteCards]
+  );
+
+  // Add or remove a label on every selected card (one undo step).
+  const toggleLabel = useCallback(
+    (label, on) => {
+      const cs = S.current.cards;
+      const ids = [...S.current.sel].filter((id) => cs[id]);
+      const patches = ids.map((id) => {
+        const cur = cs[id].data.labels || [];
+        return { id, data: { labels: on ? (cur.includes(label) ? cur : [...cur, label]) : cur.filter((l) => l !== label) } };
+      });
+      const back = ids.map((id) => ({ id, data: { labels: cs[id].data.labels || [] } }));
+      patchCards(patches, () => patchCards(back));
+    },
+    [patchCards]
+  );
+
+  // Swap an image card's picture, keeping its place, caption and labels.
+  const replaceImage = useCallback(
+    async (fileList) => {
+      const id = replaceFor.current;
+      const c = S.current.cards[id];
+      if (!c || !fileList?.length) return;
+      try {
+        const [f] = await uploadFiles([fileList[0]]);
+        setFiles((m) => ({ ...m, [f.id]: f }));
+        const back = { id, data: { fileId: c.data.fileId, crop: c.data.crop ?? null, rotate: c.data.rotate ?? 0 } };
+        patchCards([{ id, data: { fileId: f.id, crop: null, rotate: 0 } }], () => patchCards([back]));
+      } catch (e) {
+        notify(e);
+      }
+    },
+    [patchCards, notify]
   );
 
   // Cover of the board a board card opens. Undo puts the old one back.
@@ -1465,6 +1506,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       if (ar) {
         setSelArrow(ar.dataset.arrowId);
         setArrowLabel(true);
+        setTimeout(() => document.querySelector('.item-actions [aria-label="Label"]')?.click(), 0);
       }
     },
     [openCard, startEdit, applyArrows, notify]
@@ -1824,32 +1866,229 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     } else document.execCommand(cmd, false, arg);
   };
 
+  // ---------- action panel (left toolbar flips to the selection's actions) ----------
+  const actionsOn = !drawing && (sel.size > 0 || !!arrowBar);
+  const openPop = (kind) => (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const w = wrapRef.current.getBoundingClientRect();
+    setPop((p) => (p?.kind === kind ? null : { kind, top: Math.max(8, r.top - w.top), left: r.right - w.left + 8, bottom: w.bottom - r.top + 8 }));
+  };
+  const act = (label, icon, onClick, extra = {}) => (
+    <button key={label} className={'tool act' + (extra.on ? ' on' : '') + (extra.pop && pop?.kind === extra.pop ? ' open' : '')} onClick={onClick} data-tip={extra.tip || label} aria-label={extra.aria || label} aria-pressed={extra.pressed}>
+      {typeof icon === 'string' ? <Icon name={icon} size={22} /> : icon}
+      <span>{label}</span>
+    </button>
+  );
+  const selCards = [...sel].map((id) => cards[id]).filter(Boolean);
+  const labelState = {};
+  for (const c of selCards) for (const l of c.data.labels || []) labelState[l] = (labelState[l] || 0) + 1;
+  for (const l of Object.keys(labelState)) labelState[l] = labelState[l] === selCards.length ? 'all' : 'some';
+
+  function panelButtons() {
+    const back = act('Done', 'chevronLeft', () => {
+      setSel(EMPTY);
+      setSelArrow(null);
+    }, { tip: 'Done (Esc)' });
+    if (arrowBar) {
+      const { a, st } = arrowBar;
+      return [
+        back,
+        act('Color', <span className="arrow-color-dot" style={{ background: a.color || '#8a867c' }} />, openPop('arrowColor'), { aria: 'Arrow colour', pop: 'arrowColor' }),
+        act('Start', 'arrowStart', () => patchArrow(a.id, { data: { start: !st.start } }), { on: st.start, pressed: st.start, aria: 'Start arrowhead', tip: 'Arrowhead at start' }),
+        act('End', 'arrowEnd', () => patchArrow(a.id, { data: { end: !st.end } }), { on: st.end, pressed: st.end, aria: 'End arrowhead', tip: 'Arrowhead at end' }),
+        act('Label', 'label', openPop('arrowLabel'), { aria: 'Label', pop: 'arrowLabel', tip: 'Label (or double-click the arrow)' }),
+        act('Dashed', 'dashed', () => patchArrow(a.id, { data: { dashed: !st.dashed } }), { on: st.dashed, pressed: st.dashed }),
+        act(
+          'Weight',
+          <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+            <line x1="3" y1="11" x2="19" y2="11" stroke="currentColor" strokeWidth={st.width + 0.5} strokeLinecap="round" />
+          </svg>,
+          () => patchArrow(a.id, { data: { weight: (st.weight % 3) + 1 } }),
+          { tip: `Weight: ${['thin', 'normal', 'thick'][st.weight - 1]} (click to change)` }
+        ),
+        act('Delete', 'trash', () => deleteArrow(a.id), { aria: 'Delete arrow', tip: 'Delete (Del)' }),
+      ];
+    }
+    const out = [back];
+    const t = single?.type;
+    if (single) {
+      if (t === 'board') out.push(act('Open', 'open', () => openCard(single)), act('Cover', 'image', () => setCoverFor((f) => (f ? null : single.id)), { tip: 'Cover: icon, text and colour' }));
+      else if (t === 'link') out.push(act('Open', 'open', () => openCard(single)), act('Edit', 'edit', () => startEdit(single.id), { aria: 'Edit link', tip: 'Edit link (Enter)' }));
+      else if (t === 'image') {
+        if (!single.column_id) out.push(act('Draw on', 'draw', () => openInk(single), { aria: 'Draw on image', tip: 'Draw on image' }));
+        out.push(act('Edit', 'crop', () => setImgEdit(single.id), { aria: 'Edit image', tip: 'Crop and rotate' }), act('Caption', 'caption', () => actions.editCard(single.id), { tip: 'Caption (searchable)' }));
+      } else if (t === 'drawing') out.push(act('Edit', 'draw', () => openDrawing(single), { aria: 'Edit drawing', tip: 'Edit drawing (double-click)' }));
+      else out.push(act('Edit', 'edit', () => startEdit(single.id), { tip: 'Edit (Enter)' }));
+    }
+    if (!selCards.every((c) => c.type === 'drawing')) out.push(act('Color', 'palette', openPop('color'), { aria: 'Colour', pop: 'color', tip: 'Colour' }));
+    out.push(act('Labels', 'tag', openPop('labels'), { pop: 'labels', tip: 'Labels (searchable)' }));
+    out.push(act('More', 'dots', openPop('more'), { pop: 'more', aria: 'More actions', tip: 'More' }));
+    return out;
+  }
+
+  function popContent() {
+    const close = () => setPop(null);
+    const row = (label, icon, onClick, extra = {}) =>
+      extra.href ? (
+        <a key={label} className="pop-row" href={extra.href} download={extra.download} onClick={close}>
+          <Icon name={icon} size={16} />
+          {label}
+        </a>
+      ) : (
+        <button
+          key={label}
+          className={'pop-row' + (extra.danger ? ' danger' : '')}
+          onClick={() => {
+            close();
+            onClick();
+          }}
+        >
+          <Icon name={icon} size={16} />
+          {label}
+          {extra.keys && <kbd>{extra.keys}</kbd>}
+        </button>
+      );
+    if (pop.kind === 'color')
+      return (
+        <div className="pop-swatches">
+          {COLORS.map((c) => (
+            <button key={c.label} className={`swatch ${c.id ? 'c-' + c.id : 'none'}` + (single && (single.color || null) === (c.id || null) ? ' on' : '')} onClick={() => setColor(c.id)} data-tip={c.label} aria-label={c.label} />
+          ))}
+        </div>
+      );
+    if (pop.kind === 'labels') return <LabelPicker current={labelState} onToggle={toggleLabel} onClose={close} />;
+    if (pop.kind === 'arrowColor' && arrowBar)
+      return (
+        <div className="pop-swatches">
+          {ARROW_COLORS.map((c) => (
+            <button
+              key={c || 'default'}
+              className={'swatch' + ((arrowBar.a.color || null) === c ? ' on' : '')}
+              style={{ background: c || '#8a867c' }}
+              onClick={() => {
+                patchArrow(arrowBar.a.id, { color: c });
+                close();
+              }}
+              data-tip={c ? c : 'Default grey'}
+              aria-label={'Arrow colour ' + (c || 'default')}
+            />
+          ))}
+        </div>
+      );
+    if (pop.kind === 'arrowLabel' && arrowBar) return arrowLabelInput(close);
+    if (pop.kind === 'more') {
+      const ids = [...sel];
+      const rows = [];
+      if (single?.type === 'image') {
+        const f = files[single.data.fileId];
+        rows.push(
+          row('Open full size', 'open', () => openCard(single)),
+          row('Download original', 'download', null, { href: `/files/${single.data.fileId}?original=1`, download: f?.name || 'image' }),
+          row('Replace image…', 'replace', () => {
+            replaceFor.current = single.id;
+            replaceInput.current.click();
+          })
+        );
+      }
+      rows.push(
+        row('Duplicate', 'duplicate', () => duplicate(ids), { keys: 'Ctrl+D' }),
+        row('Copy', 'copy', () => {
+          const c = copySelection(false, ids);
+          if (c) toSystemClipboard(c);
+        }, { keys: 'Ctrl+C' }),
+        row('Bring to front', 'front', () => bringToFront(ids)),
+        row('Send to back', 'back', () => sendToBack(ids)),
+        row('Delete', 'trash', () => deleteCards(ids), { danger: true, keys: 'Del' })
+      );
+      return <div className="pop-menu">{rows}</div>;
+    }
+    return null;
+  }
+
+  function arrowLabelInput(close) {
+    const a = arrowBar.a;
+    return (
+      <input
+        className="arrow-label-input"
+        autoFocus
+        placeholder="Label"
+        defaultValue={a.label || ''}
+        aria-label="Arrow label"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.target.blur();
+          if (e.key === 'Escape') {
+            e.target.value = a.label || '';
+            e.target.blur();
+          }
+        }}
+        onBlur={(e) => {
+          const label = e.target.value.trim() || null;
+          if (label !== (a.label || null)) patchArrow(a.id, { label });
+          setArrowLabel(false);
+          close();
+        }}
+      />
+    );
+  }
+
   const gridSize = GRID * view.s;
   return (
-    <div className="board-wrap">
-      <aside className="toolbar">
-        {TOOLS.map((t) => (
-          <button key={t.kind} className="tool" onPointerDown={(e) => onToolDown(t.kind, e)} data-tip={`${t.label} — click or drag`} aria-label={t.label}>
-            <Icon name={t.icon} size={22} />
-            <span>{t.label}</span>
+    <div className="board-wrap" ref={wrapRef}>
+      <aside className={actionsOn ? 'toolbar show-actions' : 'toolbar'}>
+        <div className="tb-panel tb-tools" aria-hidden={actionsOn || undefined}>
+          {TOOLS.map((t) => (
+            <button key={t.kind} className="tool" onPointerDown={(e) => onToolDown(t.kind, e)} data-tip={`${t.label} — click or drag`} aria-label={t.label} tabIndex={actionsOn ? -1 : undefined}>
+              <Icon name={t.icon} size={22} />
+              <span>{t.label}</span>
+            </button>
+          ))}
+          <button className="tool" onClick={() => openDrawing(null)} data-tip="Draw (pen, mouse or finger)" aria-label="Draw" tabIndex={actionsOn ? -1 : undefined}>
+            <Icon name="draw" size={22} />
+            <span>Draw</span>
           </button>
-        ))}
-        <button className="tool" onClick={() => openDrawing(null)} data-tip="Draw (pen, mouse or finger)" aria-label="Draw">
-          <Icon name="draw" size={22} />
-          <span>Draw</span>
-        </button>
-        <button className="tool tool-camera" onClick={() => cameraInput.current.click()} data-tip="Take a photo" aria-label="Camera">
-          <Icon name="camera" size={22} />
-          <span>Camera</span>
-        </button>
-        <div className="tool-sep" />
-        <button className="tool" onClick={undo} data-tip="Undo (Ctrl+Z)" aria-label="Undo">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3" />
-          </svg>
-          <span>Undo</span>
-        </button>
+          <button className="tool tool-camera" onClick={() => cameraInput.current.click()} data-tip="Take a photo" aria-label="Camera" tabIndex={actionsOn ? -1 : undefined}>
+            <Icon name="camera" size={22} />
+            <span>Camera</span>
+          </button>
+          <div className="tool-sep" />
+          <button className="tool" onClick={undo} data-tip="Undo (Ctrl+Z)" aria-label="Undo" tabIndex={actionsOn ? -1 : undefined}>
+            <Icon name="undo" size={22} />
+            <span>Undo</span>
+          </button>
+        </div>
+        <div className="tb-panel tb-actions item-actions" aria-label="Selected item actions">
+          {actionsOn && panelButtons()}
+        </div>
       </aside>
+      <input
+        ref={replaceInput}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          replaceImage(e.target.files);
+          e.target.value = '';
+        }}
+      />
+      {pop && (
+        <div className="action-pop" style={{ '--pop-top': pop.top + 'px', '--pop-left': pop.left + 'px', '--pop-bottom': pop.bottom + 'px' }} onPointerDown={(e) => e.stopPropagation()}>
+          {popContent()}
+        </div>
+      )}
+      {imgEdit && cards[imgEdit] && (
+        <ImageEditor
+          fileId={cards[imgEdit].data.fileId}
+          file={files[cards[imgEdit].data.fileId]}
+          crop={cards[imgEdit].data.crop}
+          rotate={cards[imgEdit].data.rotate}
+          onClose={() => setImgEdit(null)}
+          onSave={({ crop, rotate }) => {
+            const c = cards[imgEdit];
+            patchCards([{ id: c.id, data: { crop, rotate } }], () => patchCards([{ id: c.id, data: { crop: c.data.crop ?? null, rotate: c.data.rotate ?? 0 } }]));
+            setImgEdit(null);
+          }}
+        />
+      )}
 
       <div
         className={dragIds.size ? 'canvas moving' : 'canvas'}
@@ -1874,115 +2113,6 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         )}
 
         {box && <div className="box-select" style={{ left: box.x1 - canvasRef.current.getBoundingClientRect().left, top: box.y1 - canvasRef.current.getBoundingClientRect().top, width: box.x2 - box.x1, height: box.y2 - box.y1 }} />}
-
-        {selBox && !editing && (
-          <div className="float-bar" style={{ left: selBox.x, top: selBox.y }}>
-            <div className="float-color">
-              <button className="icon-btn" onClick={() => setColorOpen((o) => !o)} data-tip="Colour" aria-label="Colour">
-                <Icon name="palette" size={18} />
-              </button>
-              {colorOpen && (
-                <div className="color-pop">
-                  {COLORS.map((c) => (
-                    <button key={c.label} className={`swatch ${c.id ? 'c-' + c.id : 'none'}`} onClick={() => setColor(c.id)} data-tip={c.label} aria-label={c.label} />
-                  ))}
-                </div>
-              )}
-            </div>
-            {single?.type === 'image' && !single.column_id && (
-              <button className="icon-btn" onClick={() => openInk(single)} data-tip="Draw on image" aria-label="Draw on image">
-                <Icon name="draw" size={18} />
-              </button>
-            )}
-            {single?.type === 'board' && (
-              <button className="icon-btn" onClick={() => setCoverFor((f) => (f ? null : single.id))} data-tip="Cover: icon, text and colour" aria-label="Cover">
-                <Icon name="image" size={18} />
-              </button>
-            )}
-            {single && ['board', 'link', 'image'].includes(single.type) && (
-              <button className="icon-btn" onClick={() => openCard(single)} data-tip="Open" aria-label="Open">
-                <Icon name="open" size={18} />
-              </button>
-            )}
-            <button className="icon-btn" onClick={duplicate} data-tip="Duplicate (Ctrl+D)" aria-label="Duplicate">
-              <Icon name="copy" size={18} />
-            </button>
-            <button className="icon-btn" onClick={bringToFront} data-tip="Bring to front" aria-label="Bring to front">
-              <Icon name="front" size={18} />
-            </button>
-            <button className="icon-btn danger" onClick={() => deleteCards([...sel])} data-tip="Delete (Del)" aria-label="Delete">
-              <Icon name="trash" size={18} />
-            </button>
-          </div>
-        )}
-
-        {arrowBar && (
-          <div className="float-bar arrow-bar" style={{ left: arrowBar.x, top: arrowBar.y }} onPointerDown={(e) => e.stopPropagation()}>
-            <div className="float-color">
-              <button className="icon-btn" onClick={() => setArrowColorOpen((o) => !o)} data-tip="Colour" aria-label="Arrow colour">
-                <span className="arrow-color-dot" style={{ background: arrowBar.a.color || '#8a867c' }} />
-              </button>
-              {arrowColorOpen && (
-                <div className="color-pop">
-                  {ARROW_COLORS.map((c) => (
-                    <button
-                      key={c || 'default'}
-                      className={'swatch' + ((arrowBar.a.color || null) === c ? ' on' : '')}
-                      style={{ background: c || '#8a867c' }}
-                      onClick={() => {
-                        patchArrow(arrowBar.a.id, { color: c });
-                        setArrowColorOpen(false);
-                      }}
-                      data-tip={c ? c : 'Default grey'}
-                      aria-label={'Arrow colour ' + (c || 'default')}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-            <button className={'icon-btn' + (arrowBar.st.start ? ' on' : '')} onClick={() => patchArrow(arrowBar.a.id, { data: { start: !arrowBar.st.start } })} data-tip="Arrowhead at start" aria-label="Start arrowhead" aria-pressed={arrowBar.st.start}>
-              <Icon name="arrowStart" size={18} />
-            </button>
-            <button className={'icon-btn' + (arrowBar.st.end ? ' on' : '')} onClick={() => patchArrow(arrowBar.a.id, { data: { end: !arrowBar.st.end } })} data-tip="Arrowhead at end" aria-label="End arrowhead" aria-pressed={arrowBar.st.end}>
-              <Icon name="arrowEnd" size={18} />
-            </button>
-            <button className={'icon-btn' + (arrowLabel ? ' on' : '')} onClick={() => setArrowLabel((o) => !o)} data-tip="Label (or double-click the arrow)" aria-label="Label">
-              <Icon name="label" size={18} />
-            </button>
-            <button className={'icon-btn' + (arrowBar.st.dashed ? ' on' : '')} onClick={() => patchArrow(arrowBar.a.id, { data: { dashed: !arrowBar.st.dashed } })} data-tip="Dashed" aria-label="Dashed" aria-pressed={arrowBar.st.dashed}>
-              <Icon name="dashed" size={18} />
-            </button>
-            <button className="icon-btn" onClick={() => patchArrow(arrowBar.a.id, { data: { weight: (arrowBar.st.weight % 3) + 1 } })} data-tip={`Weight: ${['thin', 'normal', 'thick'][arrowBar.st.weight - 1]} (click to change)`} aria-label="Weight">
-              <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-                <line x1="2" y1="9" x2="16" y2="9" stroke="currentColor" strokeWidth={arrowBar.st.width + 0.5} strokeLinecap="round" />
-              </svg>
-            </button>
-            <button className="icon-btn danger" onClick={() => deleteArrow(arrowBar.a.id)} data-tip="Delete (Del)" aria-label="Delete arrow">
-              <Icon name="trash" size={18} />
-            </button>
-            {arrowLabel && (
-              <input
-                className="arrow-label-input"
-                autoFocus
-                placeholder="Label"
-                defaultValue={arrowBar.a.label || ''}
-                aria-label="Arrow label"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') e.target.blur();
-                  if (e.key === 'Escape') {
-                    e.target.value = arrowBar.a.label || '';
-                    e.target.blur();
-                  }
-                }}
-                onBlur={(e) => {
-                  const label = e.target.value.trim() || null;
-                  if (label !== (arrowBar.a.label || null)) patchArrow(arrowBar.a.id, { label });
-                  setArrowLabel(false);
-                }}
-              />
-            )}
-          </div>
-        )}
 
         {editingNote && selBox && (
           <div className="format-bar" style={{ left: selBox.x, top: selBox.y }} onPointerDown={(e) => e.preventDefault()} onMouseDown={(e) => e.preventDefault()}>

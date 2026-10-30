@@ -607,6 +607,7 @@ app.get('/api/search', (req, res) => {
   res.json({ results: store.search(String(req.query.q || '')) });
 });
 app.get('/api/tags', (req, res) => res.json({ tags: store.listTags() }));
+app.get('/api/labels', (req, res) => res.json({ labels: store.listLabels() }));
 
 // ---- stats, backups, export ----
 const dirSize = (dir) => {

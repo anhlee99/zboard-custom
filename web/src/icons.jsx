@@ -46,6 +46,14 @@ const PATHS = {
   eraser: 'M4 15l8.5-8.5a2 2 0 0 1 2.8 0l3.2 3.2a2 2 0 0 1 0 2.8L13 18H7z M9 18h11 M9 10l5 5',
   undo: 'M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3',
   redo: 'M15 14l5-5-5-5 M20 9H10a6 6 0 0 0 0 12h3',
+  chevronLeft: 'M15 5l-7 7 7 7',
+  tag: 'M3 12V4h8l10 10-8 8z M7.5 7.5h.01',
+  caption: 'M4 4h16v11H4z M7 19h10',
+  crop: 'M6 2v14h14 M2 6h14v14',
+  download: 'M12 4v11 M7 10l5 5 5-5 M4 20h16',
+  replace: 'M4 8h13l-3-3 M20 16H7l3 3',
+  rotateLeft: 'M3 4v6h6 M3.5 10A8.5 8.5 0 1 1 6 17',
+  rotateRight: 'M21 4v6h-6 M20.5 10A8.5 8.5 0 1 0 18 17',
 };
 
 export function Icon({ name, size = 20, ...rest }) {

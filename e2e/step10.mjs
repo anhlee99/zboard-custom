@@ -48,7 +48,7 @@ check(!(await card(flatCard).evaluate((e) => e.classList.contains('cutout'))), '
 
 // Cover picker.
 await card(orc).locator('.board-icon').click();
-await page.click('.float-bar [aria-label="Cover"]');
+await page.click('.item-actions [aria-label="Cover"]');
 await page.waitForSelector('.cover-pop');
 await page.click('.cover-icons [aria-label="Icon 👹"]');
 await page.click('.cover-swatches [aria-label="Colour pair #e8735a #3b1d14"]');

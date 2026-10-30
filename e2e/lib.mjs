@@ -48,6 +48,7 @@ export async function drag(page, from, to, steps = 12) {
 }
 
 export async function center(locator) {
+  locator = await locator;
   const b = await locator.boundingBox();
   return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
 }
@@ -158,4 +159,14 @@ export function cutoutPng(w, h, [r, g, b]) {
     rows.push(row);
   }
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]);
+}
+
+// With a card selected, the left toolbar shows that card's actions; Esc (like clicking
+// empty board) flips it back to the tools.
+export async function showTools(page) {
+  for (let i = 0; i < 3 && (await page.locator('.toolbar.show-actions').count()); i++) {
+    await page.keyboard.press('Escape');
+    await sleep(120);
+  }
+  await sleep(320); // flip animation
 }
