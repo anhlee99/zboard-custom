@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { api, openEvents, uploadFiles } from './api.js';
 import { CardView } from './Cards.jsx';
 import ContextMenu from './ContextMenu.jsx';
+import SavedPanel, { CLIP_DRAG_TYPE } from './SavedPanel.jsx';
 import { Icon } from './icons.jsx';
 import { COLORS, DEFAULT_W, byId, clamp, htmlText, isImageFile, isUrl, sortBetween, textToHtml, uid } from './util.js';
 
@@ -51,7 +52,7 @@ function edgePoint(r, tx, ty) {
   return { x: cx + dx * Math.min(k, 1), y: cy + dy * Math.min(k, 1) };
 }
 
-export default function Board({ boardId, focus, onInfo }) {
+export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved, onClipCount }) {
   const [cards, setCards] = useState({});
   const [arrows, setArrows] = useState({});
   const [files, setFiles] = useState({});
@@ -70,6 +71,7 @@ export default function Board({ boardId, focus, onInfo }) {
   const [colorOpen, setColorOpen] = useState(false);
   const [ctx, setCtx] = useState(null); // open context menu: { x, y, ids, at }
   const [boardList, setBoardList] = useState([]);
+  const [clips, setClips] = useState([]);
   const [cutIds, setCutIds] = useState(() => {
     const clip = readClip();
     return clip?.cut && clip.board === boardId ? new Set(clip.cards.map((c) => c.id)) : EMPTY;
@@ -158,10 +160,30 @@ export default function Board({ boardId, focus, onInfo }) {
             return n;
           });
       },
-      resync: load,
+      resync: () => {
+        load();
+        loadClips();
+      },
       reload: () => location.reload(), // the server swapped its database (Drive restore)
+      clips: ({ clips: list, deleted }) =>
+        setClips((prev) => {
+          const gone = new Set([...deleted, ...list.map((c) => c.id)]);
+          return [...list, ...prev.filter((c) => !gone.has(c.id))].sort((a, b) => b.created_at - a.created_at);
+        }),
     });
   }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadClips = useCallback(() => {
+    api('GET', '/api/clips')
+      .then((r) => setClips(r.clips))
+      .catch(() => {});
+    api('GET', '/api/boards')
+      .then((r) => setBoardList(r.boards))
+      .catch(() => {});
+  }, []);
+  useEffect(loadClips, [loadClips]);
+  const clipCount = clips.filter((c) => c.board_id === boardId).length;
+  useEffect(() => onClipCount?.(clipCount), [clipCount, onClipCount]);
 
   // A search result on this same board only changes ?focus=.
   useEffect(() => {
@@ -450,6 +472,30 @@ export default function Board({ boardId, focus, onInfo }) {
       patchCards([{ id, data }]);
     },
     [patchCards, notify]
+  );
+
+  // ---------- saved items (clips) ----------
+  const placeClip = useCallback(
+    async (id, at) => {
+      setClips((prev) => prev.filter((c) => c.id !== id));
+      try {
+        const { card } = await api('POST', `/api/clips/${id}/place`, { board_id: boardId, x: Math.round(at.x), y: Math.round(at.y) });
+        applyCards([card]);
+        setSel(new Set([card.id]));
+        pushUndo(() => deleteCards([card.id], { record: false }));
+      } catch (e) {
+        notify(e);
+        loadClips();
+      }
+    },
+    [boardId, applyCards, pushUndo, deleteCards, notify, loadClips]
+  );
+  const deleteClip = useCallback(
+    async (id) => {
+      setClips((prev) => prev.filter((c) => c.id !== id));
+      await api('DELETE', `/api/clips/${id}`).catch(notify);
+    },
+    [notify]
   );
 
   // ---------- adding content ----------
@@ -1395,7 +1441,7 @@ export default function Board({ boardId, focus, onInfo }) {
 
   const onDragOver = (e) => {
     const types = [...e.dataTransfer.types];
-    if (types.includes('Files') || types.includes('text/uri-list') || types.includes('text/html') || types.includes('text/plain')) {
+    if (types.includes(CLIP_DRAG_TYPE) || types.includes('Files') || types.includes('text/uri-list') || types.includes('text/html') || types.includes('text/plain')) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
     }
@@ -1404,6 +1450,8 @@ export default function Board({ boardId, focus, onInfo }) {
     e.preventDefault();
     const at = toWorld(e.clientX, e.clientY);
     const dt = e.dataTransfer;
+    const clipId = dt.getData(CLIP_DRAG_TYPE);
+    if (clipId) return placeClip(clipId, { x: at.x - 40, y: at.y - 30 });
     if (dt.files.length) return addImages(dt.files, at);
     const html = dt.getData('text/html');
     const img = html && new DOMParser().parseFromString(html, 'text/html').querySelector('img')?.getAttribute('src');
@@ -1656,6 +1704,20 @@ export default function Board({ boardId, focus, onInfo }) {
         <div className="tool-ghost" style={{ left: ghost.x, top: ghost.y }}>
           <Icon name={TOOLS.find((t) => t.kind === ghost.kind)?.icon} size={22} />
         </div>
+      )}
+
+      {savedOpen && (
+        <SavedPanel
+          clips={clips}
+          boardId={boardId}
+          boardTitles={Object.fromEntries(boardList.map((b) => [b.id, b.title]))}
+          onPlace={(id) => {
+            const c = centerWorld();
+            placeClip(id, { x: c.x - 120, y: c.y - 80 });
+          }}
+          onDelete={deleteClip}
+          onClose={onCloseSaved}
+        />
       )}
 
       {lightbox && (

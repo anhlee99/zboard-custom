@@ -85,6 +85,14 @@ CREATE TABLE IF NOT EXISTS card_tags (
   PRIMARY KEY (card_id, tag)
 );
 CREATE INDEX IF NOT EXISTS card_tags_tag ON card_tags(tag);
+CREATE TABLE IF NOT EXISTS clips (
+  id TEXT PRIMARY KEY,
+  board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  data TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS clips_board ON clips(board_id);
 CREATE TABLE IF NOT EXISTS drive_files (
   local_id TEXT PRIMARY KEY,
   drive_id TEXT NOT NULL,
@@ -591,6 +599,39 @@ export function createStore(file) {
     return arrow;
   }
 
+  // ---- saved items (clips): things saved from web pages, waiting in a board's inbox ----
+  const CLIP_KINDS = new Set(['image', 'link', 'text']);
+  const getClip = (id) => parse(db.prepare('SELECT * FROM clips WHERE id = ?').get(id));
+  function createClip(boardId, kind, data) {
+    if (!getBoard(boardId)) throw new HttpError(404, 'Board not found');
+    if (!CLIP_KINDS.has(kind)) throw new HttpError(400, `Unknown kind: ${kind}`);
+    const id = newId();
+    db.prepare('INSERT INTO clips (id, board_id, kind, data, created_at) VALUES (?, ?, ?, ?, ?)').run(id, boardId, kind, JSON.stringify(data || {}), now());
+    return getClip(id);
+  }
+  const listClips = (boardId) =>
+    (boardId ? db.prepare('SELECT * FROM clips WHERE board_id = ? ORDER BY created_at DESC').all(boardId) : db.prepare('SELECT * FROM clips ORDER BY created_at DESC').all()).map(parse);
+  function patchClip(id, p) {
+    const clip = getClip(id);
+    if (!clip) throw new HttpError(404, 'Saved item not found');
+    if (p.board_id && !getBoard(p.board_id)) throw new HttpError(404, 'Board not found');
+    const data = obj(p.data) ? JSON.stringify({ ...clip.data, ...p.data }) : JSON.stringify(clip.data);
+    db.prepare('UPDATE clips SET board_id = ?, data = ? WHERE id = ?').run(p.board_id || clip.board_id, data, id);
+    return getClip(id);
+  }
+  function deleteClip(id) {
+    const clip = getClip(id);
+    if (!clip) throw new HttpError(404, 'Saved item not found');
+    db.prepare('DELETE FROM clips WHERE id = ?').run(id);
+    return clip;
+  }
+  // Turn a clip into a card at (x, y) and take it out of the inbox, in one transaction.
+  const placeClip = db.transaction((id, boardId, x, y, card) => {
+    const clip = deleteClip(id);
+    const [made] = createCards(boardId || clip.board_id, [{ ...card, x, y }]);
+    return { clip, card: made };
+  });
+
   // A board with everything nested under it, plus the files its cards use.
   function exportTree(boardId) {
     if (!getBoard(boardId)) throw new HttpError(404, 'Board not found');
@@ -624,6 +665,12 @@ export function createStore(file) {
     deleteArrow,
     insertFile,
     getFile,
+    getClip,
+    createClip,
+    listClips,
+    patchClip,
+    deleteClip,
+    placeClip,
     exportTree,
     allFiles: () => db.prepare('SELECT * FROM files').all(),
     filesNotOnDrive: () => db.prepare('SELECT f.* FROM files f LEFT JOIN drive_files d ON d.local_id = f.id WHERE d.local_id IS NULL').all(),

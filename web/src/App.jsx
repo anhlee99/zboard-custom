@@ -49,6 +49,8 @@ export default function App() {
   const [info, setInfo] = useState({ board: null, breadcrumbs: [] });
   const [search, setSearch] = useState(null);
   const [menu, setMenu] = useState(false);
+  const [savedOpen, setSavedOpen] = useState(false);
+  const [clipCount, setClipCount] = useState(0);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -111,12 +113,24 @@ export default function App() {
             <span>Search</span>
             <kbd>Ctrl K</kbd>
           </button>
+          <button className={savedOpen ? 'icon-btn on' : 'icon-btn'} onClick={() => setSavedOpen((o) => !o)} data-tip="Saved items" aria-label="Saved items">
+            <Icon name="inbox" />
+            {clipCount > 0 && <span className="badge">{clipCount}</span>}
+          </button>
           <button className="icon-btn" onClick={() => setMenu(true)} data-tip="Menu" aria-label="Menu">
             <Icon name="menu" />
           </button>
         </div>
       </header>
-      <Board key={route.board} boardId={route.board} focus={route.focus} onInfo={setInfo} />
+      <Board
+        key={route.board}
+        boardId={route.board}
+        focus={route.focus}
+        onInfo={setInfo}
+        savedOpen={savedOpen}
+        onCloseSaved={() => setSavedOpen(false)}
+        onClipCount={setClipCount}
+      />
       {search && <Search initial={search} onClose={() => setSearch(null)} />}
       {menu && <Menu boardId={route.board} boardTitle={info.board?.title} onClose={() => setMenu(false)} onLogout={logout} />}
     </div>

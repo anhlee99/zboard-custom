@@ -44,7 +44,7 @@ export async function uploadFiles(files) {
 export function openEvents(boardId, handlers) {
   const es = new EventSource(`/api/events?board=${encodeURIComponent(boardId)}`);
   let dropped = false;
-  for (const type of ['cards', 'delete', 'arrows', 'board', 'reload']) {
+  for (const type of ['cards', 'delete', 'arrows', 'board', 'reload', 'clips']) {
     es.addEventListener(type, (e) => {
       const d = JSON.parse(e.data);
       if (d.clientId === clientId) return;

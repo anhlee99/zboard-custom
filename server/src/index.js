@@ -365,14 +365,16 @@ function parseMeta(html) {
   return meta;
 }
 
-app.get('/api/link-preview', async (req, res) => {
-  const url = httpUrl(req.query.url);
+app.get('/api/link-preview', async (req, res) => res.json(await linkPreview(req.query.url)));
+
+async function linkPreview(raw) {
+  const url = httpUrl(raw);
   const { buf, type, finalUrl } = await fetchCapped(url.href, 3 * 1024 * 1024, 'text/html,application/xhtml+xml,*/*;q=0.5');
   const out = { url: url.href, title: null, description: null, site: new URL(finalUrl).hostname.replace(/^www\./, ''), image: null };
   if (type.startsWith('image/')) {
     out.image = (await storeRemoteImage(url.href)).id;
     out.title = path.basename(url.pathname) || out.site;
-    return res.json(out);
+    return out;
   }
   const meta = parseMeta(buf.toString('utf8'));
   out.title = meta['og:title'] || meta['twitter:title'] || meta['<title>'] || out.site;
@@ -386,8 +388,8 @@ app.get('/api/link-preview', async (req, res) => {
       // A preview without a picture is still useful.
     }
   }
-  res.json(out);
-});
+  return out;
+}
 
 app.post('/api/upload-url', async (req, res) => {
   const file = await storeRemoteImage(httpUrl(req.body?.url).href);
@@ -445,6 +447,107 @@ app.get('/files/:id/mini', async (req, res) => {
     await miniJobs.get(f.id);
   }
   res.sendFile(out, { headers: IMMUTABLE });
+});
+
+// ---- saved items (clips) from the browser extension ----
+// Clips are shown on every board (all boards / this board), so their events go to every stream.
+const emitAll = (type, payload, cid) => {
+  for (const board of streams.keys()) emit(board, type, payload, cid);
+};
+
+const str = (v, max = 2000) => (v == null || v === '' ? null : String(v).slice(0, max));
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+app.get('/api/clips', (req, res) => res.json({ clips: store.listClips() }));
+app.get('/api/boards/:id/clips', (req, res) => {
+  if (!store.getBoard(req.params.id)) throw new HttpError(404, 'Board not found');
+  res.json({ clips: store.listClips(req.params.id) });
+});
+
+// multipart (field "file", sent by the browser after it fetched the image itself) or JSON:
+//   { board_id, kind: 'image', src_url }   → the server downloads the image
+//   { board_id, kind: 'link', url, title } | { board_id, kind: 'text', text }
+// Optional page_url / page_title say where it came from.
+app.post('/api/clips', upload.single('file'), async (req, res) => {
+  const b = req.body || {};
+  const boardId = b.board_id || 'root';
+  if (!store.getBoard(boardId)) throw new HttpError(404, 'That board no longer exists. Pick another board in the extension.');
+  const source = { page_url: str(b.page_url), page_title: str(b.page_title) };
+  let clip;
+  if (req.file) {
+    let file;
+    try {
+      file = await storeUpload(req.file);
+    } finally {
+      fs.rmSync(req.file.path, { force: true });
+    }
+    clip = store.createClip(boardId, 'image', { fileId: file.id, src_url: str(b.src_url), ...source });
+  } else if (b.kind === 'image') {
+    const file = await storeRemoteImage(httpUrl(b.src_url).href);
+    clip = store.createClip(boardId, 'image', { fileId: file.id, src_url: b.src_url, ...source });
+  } else if (b.kind === 'link') {
+    const url = httpUrl(b.url).href;
+    clip = store.createClip(boardId, 'link', { url, title: str(b.title) || url, ...source });
+    // Fill in the preview afterwards so the extension gets its answer at once.
+    linkPreview(url)
+      .then((p) => {
+        const next = store.patchClip(clip.id, { data: { title: str(b.title) || p.title, description: p.description, site: p.site, image: p.image } });
+        emitAll('clips', { clips: [next], deleted: [] });
+      })
+      .catch(() => {});
+  } else if (b.kind === 'text') {
+    if (!String(b.text || '').trim()) throw new HttpError(400, 'Nothing to save: the selection is empty');
+    clip = store.createClip(boardId, 'text', { text: String(b.text).slice(0, 20000), ...source });
+  } else {
+    throw new HttpError(400, 'Send a file, or kind image/link/text');
+  }
+  emitAll('clips', { clips: [clip], deleted: [] }, clientId(req));
+  res.status(201).json({ clip });
+});
+
+function clipToCard(clip) {
+  const d = clip.data;
+  if (clip.kind === 'image') return { type: 'image', data: { fileId: d.fileId, caption: '' } };
+  if (clip.kind === 'link') return { type: 'link', data: { url: d.url, title: d.title, description: d.description ?? null, site: d.site ?? null, image: d.image ?? null } };
+  const source = d.page_url ? `<div><a href="${escapeHtml(d.page_url)}">${escapeHtml(d.page_title || d.page_url)}</a></div>` : '';
+  const text = escapeHtml(d.text)
+    .split(/\r?\n/)
+    .map((l) => `<div>${l || '<br>'}</div>`)
+    .join('');
+  return { type: 'note', data: { html: text + source } };
+}
+
+app.post('/api/clips/:id/place', (req, res) => {
+  const clip = store.getClip(req.params.id);
+  if (!clip) throw new HttpError(404, 'Saved item not found');
+  const b = req.body || {};
+  const { card } = store.placeClip(clip.id, b.board_id, Number(b.x) || 0, Number(b.y) || 0, clipToCard(clip));
+  emit(card.board_id, 'cards', { cards: [card] }, clientId(req));
+  emitAll('clips', { clips: [], deleted: [clip.id] }, clientId(req));
+  res.status(201).json({ card });
+});
+
+app.patch('/api/clips/:id', (req, res) => {
+  const clip = store.patchClip(req.params.id, { board_id: req.body?.board_id });
+  emitAll('clips', { clips: [clip], deleted: [] }, clientId(req));
+  res.json({ clip });
+});
+
+app.delete('/api/clips/:id', (req, res) => {
+  store.deleteClip(req.params.id);
+  emitAll('clips', { clips: [], deleted: [req.params.id] }, clientId(req));
+  res.json({ ok: true });
+});
+
+app.get('/api/extension.zip', (req, res) => {
+  const dir = path.join(ROOT, 'extension');
+  if (!fs.existsSync(path.join(dir, 'manifest.json'))) throw new HttpError(404, 'extension/ folder is missing');
+  res.attachment('zboard-clipper.zip');
+  const zip = new ZipArchive({ zlib: { level: 9 } });
+  zip.on('error', (e) => res.destroy(e));
+  zip.pipe(res);
+  zip.directory(dir, 'zboard-clipper');
+  zip.finalize();
 });
 
 // ---- search and tags ----

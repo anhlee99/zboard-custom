@@ -103,6 +103,81 @@ function DriveSection() {
   );
 }
 
+// Copy that also works on plain-http LAN addresses, where navigator.clipboard is missing.
+function copyText(text) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  const t = document.createElement('textarea');
+  t.value = text;
+  document.body.append(t);
+  t.select();
+  document.execCommand('copy');
+  t.remove();
+  return Promise.resolve();
+}
+
+function CopyField({ label, value }) {
+  const [done, setDone] = useState(false);
+  return (
+    <div className="copy-field">
+      <label>{label}</label>
+      <div className="copy-row">
+        <input readOnly value={value} onFocus={(e) => e.target.select()} aria-label={label} />
+        <button
+          onClick={() =>
+            copyText(value).then(() => {
+              setDone(true);
+              setTimeout(() => setDone(false), 1500);
+            })
+          }
+        >
+          {done ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ExtensionSection() {
+  const [token, setToken] = useState('');
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (open && !token) api('GET', '/api/token').then((r) => setToken(r.token)).catch(() => {});
+  }, [open, token]);
+  async function rotate() {
+    if (!window.confirm('Make a new token? The browser extension and the CLI stop working until you give them the new one.')) return;
+    const r = await api('POST', '/api/token/rotate');
+    setToken(r.token);
+  }
+  return (
+    <section className="menu-section">
+      <h4>Browser extension</h4>
+      {!open ? (
+        <div className="menu-buttons">
+          <button onClick={() => setOpen(true)}>Set up ZBoard Clipper</button>
+        </div>
+      ) : (
+        <>
+          <ol className="steps">
+            <li>
+              <a href="/api/extension.zip" download>
+                Download the extension
+              </a>{' '}
+              and unzip it.
+            </li>
+            <li>Open edge://extensions (or chrome://extensions), turn on Developer mode, choose “Load unpacked” and pick the unzipped folder.</li>
+            <li>Click the ZBoard Clipper icon and paste these:</li>
+          </ol>
+          <CopyField label="Server address" value={location.origin} />
+          <CopyField label="Token" value={token || '…'} />
+          <div className="menu-buttons">
+            <button onClick={rotate}>New token</button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
   const [stats, setStats] = useState(null);
   const [backup, setBackup] = useState(null);
@@ -177,6 +252,8 @@ export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
         </section>
 
         <DriveSection />
+
+        <ExtensionSection />
 
         <section className="menu-section">
           <h4>Export</h4>
