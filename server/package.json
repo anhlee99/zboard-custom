@@ -3,8 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.13" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning src/index.js"
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=../.env src/index.js",
+    "test": "bash test/step1.sh"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^5.3.0",
+    "multer": "^2.5.0",
+    "sharp": "^0.35.5"
   }
 }
