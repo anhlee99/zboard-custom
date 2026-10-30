@@ -310,6 +310,9 @@ input {
   pointer-events: none;
   box-shadow: var(--shadow-lift);
   opacity: 0.92;
+  /* Own GPU layer while dragged: moving it slides pixels instead of repainting it and every card
+     under it, which at high zoom is most of the screen. */
+  will-change: transform;
 }
 .card.c-yellow { background: var(--c-yellow); }
 .card.c-green { background: var(--c-green); }
