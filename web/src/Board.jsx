@@ -291,6 +291,19 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     const g = gesture.current;
     measure(g?.type === 'drag' || g?.type === 'resize' ? new Set(g.ids || [g.id]) : null);
   }, [cards, measure]);
+
+  // While the view is moving, the board content is its own GPU layer, so panning moves pixels
+  // instead of repainting every visible card (that cost grows with zoom). Shortly after the
+  // view stops it goes back to normal, so zoomed-in images are redrawn sharp.
+  const fastTimer = useRef(0);
+  useLayoutEffect(() => {
+    const el = worldRef.current;
+    if (!el) return;
+    el.classList.add('fast');
+    clearTimeout(fastTimer.current);
+    fastTimer.current = setTimeout(() => el.classList.remove('fast'), 250);
+  }, [view]);
+  useEffect(() => () => clearTimeout(fastTimer.current), []);
   const [canvasSize, setCanvasSize] = useState({ w: 1200, h: 800 });
   useEffect(() => {
     const el = canvasRef.current;

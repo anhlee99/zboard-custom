@@ -269,6 +269,9 @@ input {
   height: 0;
   transform-origin: 0 0;
 }
+.world.fast {
+  will-change: transform;
+}
 .empty-hint {
   position: absolute;
   inset: 0;
