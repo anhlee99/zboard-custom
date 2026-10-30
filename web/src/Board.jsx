@@ -54,6 +54,7 @@ export default function Board({ boardId, focus, onInfo }) {
   const [lightbox, setLightbox] = useState(null);
   const [toast, setToast] = useState(null);
   const [colorOpen, setColorOpen] = useState(false);
+  const [addMenu, setAddMenu] = useState(null);
   const [rectsVersion, setRectsVersion] = useState(0);
 
   const S = useRef({});
@@ -61,6 +62,7 @@ export default function Board({ boardId, focus, onInfo }) {
   const canvasRef = useRef(null);
   const worldRef = useRef(null);
   const fileInput = useRef(null);
+  const cameraInput = useRef(null);
   const rects = useRef(new Map());
   const undoStack = useRef([]);
   const fresh = useRef(new Set());
@@ -623,6 +625,12 @@ export default function Board({ boardId, focus, onInfo }) {
       if (lightbox) return;
       const t = e.target;
       pointer.current = { x: e.clientX, y: e.clientY };
+      lastPointerType.current = e.pointerType;
+      if (e.pointerType === 'touch' && !t.closest('[data-handle]')) {
+        touchDownRef.current(e);
+        return;
+      }
+      setAddMenu(null);
       const v = S.current.view;
       let g = null;
       if (e.button === 1 || e.button === 2 || (space.current && e.button === 0)) {
@@ -746,6 +754,11 @@ export default function Board({ boardId, focus, onInfo }) {
         const g = gesture.current;
         gesture.current = null;
         if (!g) return;
+        if (ev.type === 'pointercancel' && g.type === 'tool') {
+          setGhost(null);
+          setHint(null);
+          return;
+        }
         if (g.type === 'resize' && g.w && g.w !== g.w0) {
           patchCards([{ id: g.id, w: g.w }], () => patchCards([{ id: g.id, w: g.w0 }]));
         } else if (g.type === 'arrow') {
@@ -801,6 +814,142 @@ export default function Board({ boardId, focus, onInfo }) {
       window.addEventListener('pointercancel', up);
   };
 
+  // ---------- touch: one finger pans, two pinch, hold picks up a card ----------
+  const touches = useRef(new Map());
+  const touchG = useRef(null);
+  const lastTap = useRef(null);
+  const lastPointerType = useRef('mouse');
+  const touchDownRef = useRef(null);
+  touchDownRef.current = (e) => {
+    touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const cur = touchG.current;
+    if (touches.current.size >= 2) {
+      if (cur?.handedOff || touches.current.size > 2) return;
+      clearTimeout(cur?.timer);
+      const [a, b] = [...touches.current.values()];
+      touchG.current = { type: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, v0: S.current.view };
+      return;
+    }
+    const t = e.target;
+    if (!t.closest('.add-menu')) setAddMenu(null);
+    if (t.closest('input, textarea, select, button, a, [contenteditable="true"], .float-bar, .format-bar, .add-menu')) {
+      touchG.current = null;
+      return;
+    }
+    const base = { id: e.pointerId, sx: e.clientX, sy: e.clientY };
+    const arrowEl = t.closest('[data-arrow-id]');
+    const cardEl = t.closest('[data-card-id]');
+    if (arrowEl) {
+      setSelArrow(arrowEl.dataset.arrowId);
+      setSel(EMPTY);
+      touchG.current = null;
+    } else if (cardEl) {
+      const id = cardEl.dataset.cardId;
+      if (S.current.editing === id) return (touchG.current = null);
+      const g = { ...base, type: 'hold-card', card: id };
+      g.timer = setTimeout(() => {
+        if (touchG.current !== g) return;
+        g.handedOff = true;
+        navigator.vibrate?.(15);
+        setSel(new Set([id]));
+        if (S.current.editing) document.activeElement?.blur?.();
+        const p = touches.current.get(e.pointerId) || { x: base.sx, y: base.sy };
+        beginRef.current({ type: 'maybe-drag', ids: [id], sx: p.x, sy: p.y });
+      }, 280);
+      touchG.current = g;
+    } else {
+      const g = { ...base, type: 'hold-empty' };
+      g.timer = setTimeout(() => {
+        if (touchG.current !== g) return;
+        g.fired = true;
+        navigator.vibrate?.(15);
+        setAddMenu({ x: e.clientX, y: e.clientY, at: toWorld(e.clientX, e.clientY) });
+      }, 550);
+      touchG.current = g;
+    }
+  };
+
+  useEffect(() => {
+    const move = (e) => {
+      if (e.pointerType !== 'touch' || !touches.current.has(e.pointerId)) return;
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const g = touchG.current;
+      if (!g || g.handedOff) return;
+      if (g.type === 'pinch') {
+        if (touches.current.size < 2) return;
+        const [a, b] = [...touches.current.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        const r = canvasRef.current.getBoundingClientRect();
+        const v0 = g.v0;
+        const s = clamp((v0.s * d) / g.d0, MIN_S, MAX_S);
+        const wx = (g.m0.x - r.left - v0.x) / v0.s;
+        const wy = (g.m0.y - r.top - v0.y) / v0.s;
+        setView({ s, x: m.x - r.left - wx * s, y: m.y - r.top - wy * s });
+        return;
+      }
+      if (e.pointerId !== g.id) return;
+      if (g.type === 'hold-card' || g.type === 'hold-empty') {
+        // A quick swipe pans, even when it starts on a card.
+        if (!g.fired && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) > 8) {
+          clearTimeout(g.timer);
+          const v = S.current.view;
+          touchG.current = { type: 'pan', id: g.id, sx: g.sx, sy: g.sy, vx: v.x, vy: v.y };
+          setView((vv) => ({ ...vv, x: v.x + e.clientX - g.sx, y: v.y + e.clientY - g.sy }));
+        }
+        return;
+      }
+      if (g.type === 'pan') setView((v) => ({ ...v, x: g.vx + e.clientX - g.sx, y: g.vy + e.clientY - g.sy }));
+    };
+    const up = (e) => {
+      if (e.pointerType !== 'touch' || !touches.current.has(e.pointerId)) return;
+      touches.current.delete(e.pointerId);
+      const g = touchG.current;
+      if (!g) return;
+      if (g.type === 'pinch') {
+        const rest = [...touches.current.entries()];
+        if (rest.length === 1) {
+          const [id, p] = rest[0];
+          const v = S.current.view;
+          touchG.current = { type: 'pan', id, sx: p.x, sy: p.y, vx: v.x, vy: v.y };
+        } else if (!rest.length) touchG.current = null;
+        return;
+      }
+      if (e.pointerId !== g.id) return;
+      clearTimeout(g.timer);
+      touchG.current = null;
+      if (g.handedOff || g.fired || g.type === 'pan' || e.type === 'pointercancel') return;
+      if (g.type === 'hold-card') {
+        const now = Date.now();
+        const lt = lastTap.current;
+        if (lt && lt.id === g.card && now - lt.t < 350) {
+          lastTap.current = null;
+          const c = S.current.cards[g.card];
+          if (c && (c.type === 'board' || c.type === 'image' || (c.type === 'link' && c.data.url))) openCard(c);
+          else if (c) startEdit(c.id);
+        } else {
+          lastTap.current = { id: g.card, t: now };
+          setSel(new Set([g.card]));
+          setSelArrow(null);
+          if (S.current.editing && S.current.editing !== g.card) document.activeElement?.blur?.();
+        }
+      } else if (g.type === 'hold-empty') {
+        if (S.current.editing) document.activeElement?.blur?.();
+        setSel(EMPTY);
+        setSelArrow(null);
+        setColorOpen(false);
+      }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+  }, [openCard, startEdit]);
+
   const onToolDown = (kind, e) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -809,6 +958,7 @@ export default function Board({ boardId, focus, onInfo }) {
 
   const onDoubleClick = useCallback(
     (e) => {
+      if (lastPointerType.current === 'touch') return; // double-tap is handled by the touch code
       const el = e.target.closest('[data-card-id]');
       if (el) {
         const c = S.current.cards[el.dataset.cardId];
@@ -1027,7 +1177,11 @@ export default function Board({ boardId, focus, onInfo }) {
       y1 = Math.min(y1, r.y);
       x2 = Math.max(x2, r.x + r.w);
     }
-    if (x1 !== Infinity) selBox = { x: ((x1 + x2) / 2) * view.s + view.x, y: y1 * view.s + view.y };
+    if (x1 !== Infinity) {
+      // Keep the floating bars on screen (they are up to ~240 px wide).
+      const cw = canvasRef.current?.clientWidth || 1000;
+      selBox = { x: clamp(((x1 + x2) / 2) * view.s + view.x, 124, Math.max(124, cw - 124)), y: Math.max(56, y1 * view.s + view.y) };
+    }
   }
   const single = sel.size === 1 ? cards[[...sel][0]] : null;
   const editingNote = editing && cards[editing]?.type === 'note';
@@ -1050,6 +1204,10 @@ export default function Board({ boardId, focus, onInfo }) {
             <span>{t.label}</span>
           </button>
         ))}
+        <button className="tool tool-camera" onClick={() => cameraInput.current.click()} data-tip="Take a photo" aria-label="Camera">
+          <Icon name="camera" size={22} />
+          <span>Camera</span>
+        </button>
         <div className="tool-sep" />
         <button className="tool" onClick={undo} data-tip="Undo (Ctrl+Z)" aria-label="Undo">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -1136,6 +1294,22 @@ export default function Board({ boardId, focus, onInfo }) {
           </div>
         )}
 
+        {addMenu && (
+          <div className="add-menu" style={{ left: clamp(addMenu.x - canvasRef.current.getBoundingClientRect().left, 8, canvasRef.current.clientWidth - 188), top: clamp(addMenu.y - canvasRef.current.getBoundingClientRect().top, 8, canvasRef.current.clientHeight - 300) }}>
+            {TOOLS.map((t) => (
+              <button
+                key={t.kind}
+                onClick={() => {
+                  addTool(t.kind, { x: Math.round(addMenu.at.x), y: Math.round(addMenu.at.y) });
+                  setAddMenu(null);
+                }}
+              >
+                <Icon name={t.icon} size={18} /> {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="zoom-ctl">
           <button className="icon-btn" onClick={() => zoomCenter(0.8)} data-tip="Zoom out (−)" aria-label="Zoom out">
             <Icon name="minus" size={16} />
@@ -1163,6 +1337,18 @@ export default function Board({ boardId, focus, onInfo }) {
 
       {toast && <div className="toast">{toast}</div>}
 
+      <input
+        ref={cameraInput}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        onChange={(e) => {
+          const c = centerWorld();
+          addImages(e.target.files, { x: Math.round(c.x - 120), y: Math.round(c.y - 120) });
+          e.target.value = '';
+        }}
+      />
       <input
         ref={fileInput}
         type="file"

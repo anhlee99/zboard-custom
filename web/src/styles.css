@@ -782,3 +782,108 @@ input {
   z-index: 300;
   max-width: calc(100vw - 32px);
 }
+
+/* ---------- add menu (long-press on empty space) ---------- */
+.add-menu {
+  position: absolute;
+  z-index: 50;
+  min-width: 180px;
+  background: var(--panel);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lift);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+}
+.add-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 6px;
+}
+.add-menu button:hover,
+.add-menu button:active {
+  background: var(--bg);
+}
+
+/* Long notes scroll inside the editor instead of panning the board. */
+.card.editing .note-body {
+  max-height: 60vh;
+  overflow: auto;
+  touch-action: pan-y;
+}
+
+.tool-camera {
+  display: none;
+}
+@media (pointer: coarse) {
+  .tool-camera {
+    display: flex;
+  }
+}
+
+/* ---------- phone layout ---------- */
+.topbar {
+  padding-top: env(safe-area-inset-top);
+  height: calc(var(--topbar-h) + env(safe-area-inset-top));
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+}
+@media (max-width: 700px) {
+  .board-wrap {
+    flex-direction: column-reverse;
+  }
+  .toolbar {
+    width: auto;
+    height: auto;
+    flex-direction: row;
+    border-right: 0;
+    border-top: 1px solid var(--line);
+    padding: 4px max(4px, env(safe-area-inset-left)) calc(4px + env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-right));
+    overflow-x: auto;
+    overflow-y: hidden;
+    justify-content: flex-start;
+    scrollbar-width: none;
+  }
+  .toolbar::-webkit-scrollbar {
+    display: none;
+  }
+  .tool {
+    width: 52px;
+    flex: none;
+    touch-action: pan-x;
+    font-size: 10px;
+  }
+  .tool-camera {
+    display: flex;
+  }
+  .tool-sep {
+    width: 1px;
+    height: 32px;
+    margin: 0 4px;
+    flex: none;
+  }
+  .crumb {
+    max-width: 120px;
+  }
+  .logo {
+    padding: 4px;
+  }
+  .zoom-ctl {
+    bottom: 8px;
+    right: 8px;
+  }
+  .float-bar,
+  .format-bar {
+    max-width: calc(100vw - 16px);
+  }
+  .float-bar .icon-btn,
+  .format-bar button {
+    width: 36px;
+    height: 36px;
+  }
+}

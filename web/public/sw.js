@@ -1,0 +1,56 @@
+// ZBoard service worker. The build stamps VERSION and SHELL (see vite.config.js),
+// so every new build gets a new shell cache and replaces the old one on next load.
+const VERSION = '__ZB_VERSION__';
+const SHELL = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-192.png'].concat(/*__ZB_SHELL__*/ []);
+const SHELL_CACHE = 'zb-shell-' + VERSION;
+const IMAGE_CACHE = 'zb-images-v1';
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(SHELL_CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('zb-shell-') && k !== SHELL_CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
+});
+
+async function cacheFirst(cacheName, req) {
+  const cache = await caches.open(cacheName);
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  const res = await fetch(req);
+  if (res.ok) cache.put(req, res.clone());
+  return res;
+}
+
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
+  // Live data always goes to the network.
+  if (url.pathname.startsWith('/api/')) return;
+  // Thumbnails never change for a given id.
+  if (/^\/files\/[^/]+\/(thumb|mini)$/.test(url.pathname)) {
+    e.respondWith(cacheFirst(IMAGE_CACHE, req));
+    return;
+  }
+  if (url.pathname.startsWith('/files/')) return;
+  // Pages: network first so a new build shows up, the cached shell when offline.
+  if (req.mode === 'navigate') {
+    e.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res.ok) caches.open(SHELL_CACHE).then((c) => c.put('/', res.clone()));
+          return res;
+        })
+        .catch(() => caches.match('/', { cacheName: SHELL_CACHE }))
+    );
+    return;
+  }
+  if (SHELL.includes(url.pathname)) e.respondWith(cacheFirst(SHELL_CACHE, req));
+});

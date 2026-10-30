@@ -23,6 +23,10 @@ export async function launch() {
   return chromium.launch({ channel: process.env.PW_CHANNEL || 'msedge', headless: process.env.HEADED ? false : true });
 }
 
+export function chromiumPersistent(dir) {
+  return chromium.launchPersistentContext(dir, { channel: process.env.PW_CHANNEL || 'msedge', headless: !process.env.HEADED });
+}
+
 export async function login(browser, viewport = { width: 1440, height: 900 }, extra = {}) {
   const context = await browser.newContext({ viewport, ...extra });
   const page = await context.newPage();

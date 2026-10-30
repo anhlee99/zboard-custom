@@ -1,10 +1,35 @@
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const api = 'http://localhost:' + (process.env.PORT || 3000);
 
+// Stamp dist/sw.js with a version derived from the build output and the list of shell files.
+function serviceWorker() {
+  let outDir;
+  return {
+    name: 'zboard-sw',
+    apply: 'build',
+    configResolved(c) {
+      outDir = path.resolve(c.root, c.build.outDir);
+    },
+    writeBundle(_, bundle) {
+      const shell = Object.keys(bundle)
+        .filter((f) => /\.(js|css)$/.test(f))
+        .map((f) => '/' + f)
+        .sort();
+      const version = createHash('sha1').update(shell.join('\n')).digest('hex').slice(0, 12);
+      const file = path.join(outDir, 'sw.js');
+      const src = fs.readFileSync(file, 'utf8').replace('__ZB_VERSION__', version).replace('/*__ZB_SHELL__*/ []', JSON.stringify(shell));
+      fs.writeFileSync(file, src);
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), serviceWorker()],
   server: {
     port: 5173,
     host: true,
