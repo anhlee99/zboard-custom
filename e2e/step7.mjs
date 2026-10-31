@@ -36,14 +36,18 @@ async function framesWhilePanning(ms = 2500) {
         let last = 0;
         let end = 0;
         let i = 0;
+        let net = 0; // how far the pan has gone, so it can come back at the end
         function tick(t) {
           if (last) frames.push(t - last);
           last = t;
           if (!end) end = t + ms;
           const dir = Math.floor(i++ / 60) % 2 ? -1 : 1;
+          net += dir;
           canvas.dispatchEvent(new WheelEvent('wheel', { deltaX: 14 * dir, deltaY: 9 * dir, bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
           if (t < end) requestAnimationFrame(tick);
           else {
+            // Return to where it started, whatever the frame rate was.
+            canvas.dispatchEvent(new WheelEvent('wheel', { deltaX: -14 * net, deltaY: -9 * net, bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
             const sorted = [...frames].sort((a, b) => a - b);
             const avg = frames.reduce((a, b) => a + b, 0) / frames.length;
             resolve({ fps: Math.round(1000 / avg), p95: Math.round(sorted[Math.floor(sorted.length * 0.95)]), max: Math.round(sorted.at(-1)), frames: frames.length });
@@ -87,12 +91,27 @@ await sleep(500);
 const zoom = Number((await page.locator('.zoom-pct').textContent()).replace('%', ''));
 await page.waitForFunction(() => document.querySelectorAll('.card-image img').length >= 1000, null, { timeout: 15000 }).catch(() => {});
 const all = await visibleImages();
-const minis = await page.evaluate(() => [...document.querySelectorAll('.card-image img')].filter((i) => i.src.endsWith('/mini')).length);
-check(zoom < 45 && all === 1000 && minis === all, `zoomed out to ${zoom}%: all ${all} cards shown with 256 px minis (${minis})`);
+const minis = await page.evaluate(() => [...document.querySelectorAll('.card-image img')].filter((i) => /\/(mini|micro)$/.test(i.src)).length);
+check(zoom < 45 && all === 1000 && minis === all, `zoomed out to ${zoom}%: all ${all} cards shown with small previews (${minis})`);
 await sleep(2500); // let the minis arrive
 const far = await framesWhilePanning();
 console.log('  zoomed-out pan:', JSON.stringify(far));
 check(far.fps >= 17 && far.max < 1000, `zoomed out: ${far.fps} fps, longest frame ${far.max} ms (target ≥ 17 fps, no multi-second freeze)`);
+
+// --- far out the board is one picture; the real cards still take clicks ---
+const snapInfo = await page.evaluate(() => ({ snap: document.querySelector('.world').classList.contains('snap'), canvas: !!document.querySelector('.far-snapshot')?.width }));
+check(snapInfo.snap && snapInfo.canvas, 'far out, the board is drawn as one picture', JSON.stringify(snapInfo));
+const hiddenCard = await page.evaluate(() => {
+  for (const el of document.querySelectorAll('.world > .card-image')) {
+    const r = el.getBoundingClientRect();
+    if (r.left > 120 && r.top > 120 && r.right < innerWidth - 120 && r.bottom < innerHeight - 120 && getComputedStyle(el).opacity === '0') return { id: el.dataset.cardId, x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  }
+  return null;
+});
+await page.mouse.click(hiddenCard.x, hiddenCard.y);
+await sleep(300);
+check(await page.evaluate((id) => { const el = document.querySelector(`[data-card-id="${id}"]`); return el.classList.contains('selected') && getComputedStyle(el).opacity === '1'; }, hiddenCard.id), 'clicking the picture selects the real card, which then shows live');
+await page.keyboard.press('Escape');
 
 // --- drag still works on the big board ---
 await page.keyboard.press('0');

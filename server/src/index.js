@@ -236,6 +236,7 @@ const upload = multer({ dest: DIRS.tmp, limits: { fileSize: MAX_UPLOAD_MB * 1024
 
 const thumbPath = (id) => path.join(DIRS.thumbs, id + '.webp');
 const miniPath = (id) => path.join(DIRS.minis, id + '.webp');
+const microPath = (id) => path.join(DIRS.minis, id + '-96.webp');
 const originalPath = (f) => path.join(DIRS.files, f.id + f.ext);
 const displayPath = (f) => path.join(DIRS.files, f.id + (f.display_ext || f.ext));
 
@@ -258,7 +259,14 @@ async function makeDerivatives(row, isHeic) {
   out.height = turned ? meta.width : meta.height;
   await sharp(src).rotate().resize(800, 800, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 80 }).toFile(thumbPath(row.id));
   out.alpha = await hasTransparency(meta, thumbPath(row.id));
+  out.color = await mainColor(thumbPath(row.id));
   return out;
+}
+
+// One colour for the whole picture: shown on a card while (or instead of) loading the image far out.
+async function mainColor(thumb) {
+  const { data } = await sharp(thumb).flatten({ background: '#ffffff' }).resize(1, 1, { fit: 'cover' }).raw().toBuffer({ resolveWithObject: true });
+  return '#' + [data[0], data[1], data[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
 }
 
 // Cut-outs (PNGs with a see-through background) are drawn without a card frame.
@@ -474,29 +482,36 @@ app.get('/files/:id/thumb', (req, res) => {
   res.sendFile(thumbPath(f.id), { headers: IMMUTABLE });
 });
 
-const miniJobs = new Map();
-app.get('/files/:id/mini', async (req, res) => {
-  const f = fileOr404(req.params.id);
-  const out = miniPath(f.id);
-  if (!fs.existsSync(out)) {
-    if (!fs.existsSync(thumbPath(f.id))) throw new HttpError(404, 'No thumbnail for this file');
-    if (!miniJobs.has(f.id)) {
-      const job = sharp(thumbPath(f.id))
-        .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 70 })
-        .toBuffer()
-        .then((buf) => {
-          const tmp = path.join(DIRS.tmp, `mini-${f.id}`);
-          fs.writeFileSync(tmp, buf);
-          fs.renameSync(tmp, out);
-        })
-        .finally(() => miniJobs.delete(f.id));
-      miniJobs.set(f.id, job);
+// Smaller copies made from the thumbnail on first request and kept: 256 px "mini" for zoomed-out
+// boards, 96 px "micro" for very far out, where cards are only a few dozen pixels wide.
+const sizeJobs = new Map();
+function smallCopy(name, px, quality, pathOf) {
+  app.get(`/files/:id/${name}`, async (req, res) => {
+    const f = fileOr404(req.params.id);
+    const out = pathOf(f.id);
+    if (!fs.existsSync(out)) {
+      if (!fs.existsSync(thumbPath(f.id))) throw new HttpError(404, 'No thumbnail for this file');
+      const key = `${name}:${f.id}`;
+      if (!sizeJobs.has(key)) {
+        const job = sharp(thumbPath(f.id))
+          .resize(px, px, { fit: 'inside', withoutEnlargement: true })
+          .webp({ quality })
+          .toBuffer()
+          .then((buf) => {
+            const tmp = path.join(DIRS.tmp, `${name}-${f.id}`);
+            fs.writeFileSync(tmp, buf);
+            fs.renameSync(tmp, out);
+          })
+          .finally(() => sizeJobs.delete(key));
+        sizeJobs.set(key, job);
+      }
+      await sizeJobs.get(key);
     }
-    await miniJobs.get(f.id);
-  }
-  res.sendFile(out, { headers: IMMUTABLE });
-});
+    res.sendFile(out, { headers: IMMUTABLE });
+  });
+}
+smallCopy('mini', 256, 70, miniPath);
+smallCopy('micro', 96, 60, microPath);
 
 // ---- saved items (clips) from the browser extension ----
 // Clips are shown on every board (all boards / this board), so their events go to every stream.
@@ -607,6 +622,7 @@ app.get('/api/search', (req, res) => {
   res.json({ results: store.search(String(req.query.q || '')) });
 });
 app.get('/api/tags', (req, res) => res.json({ tags: store.listTags() }));
+app.get('/api/labels', (req, res) => res.json({ labels: store.listLabels() }));
 
 // ---- stats, backups, export ----
 const dirSize = (dir) => {
@@ -775,6 +791,15 @@ async function rebuildMissingThumbs() {
       store.setFileAlpha(f.id, await hasTransparency(await sharp(src).metadata(), thumbPath(f.id)));
     } catch (e) {
       log(`transparency check for ${f.id} failed: ${e.message}`);
+    }
+  }
+  // ... and before the main colour was kept.
+  for (const f of store.allFiles()) {
+    if (f.color != null || !fs.existsSync(thumbPath(f.id))) continue;
+    try {
+      store.setFileColor(f.id, await mainColor(thumbPath(f.id)));
+    } catch (e) {
+      log(`colour for ${f.id} failed: ${e.message}`);
     }
   }
 }

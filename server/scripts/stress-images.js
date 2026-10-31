@@ -34,7 +34,7 @@ const store = createStore(path.join(DATA_DIR, 'zboard.db'));
 const records = JSON.parse(store.getMeta('stress_boards') || '[]');
 
 function removeFile(f) {
-  for (const p of [dir('files') + `/${f.id}${f.ext}`, dir('thumbs') + `/${f.id}.webp`, dir('minis') + `/${f.id}.webp`]) fs.rmSync(p, { force: true });
+  for (const p of [dir('files') + `/${f.id}${f.ext}`, dir('thumbs') + `/${f.id}.webp`, dir('minis') + `/${f.id}.webp`, dir('minis') + `/${f.id}-96.webp`]) fs.rmSync(p, { force: true });
   store.db.prepare('DELETE FROM files WHERE id = ?').run(f.id);
   store.db.prepare('DELETE FROM drive_files WHERE local_id = ?').run(f.id);
 }

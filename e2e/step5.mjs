@@ -1,5 +1,5 @@
 // Step 5 checks: context menu, clipboard across boards and tabs, tooltips.
-import { api, center, check, done, launch, login, sleep } from './lib.mjs';
+import { api, center, check, done, launch, login, showTools, sleep } from './lib.mjs';
 
 const root = await api('GET', '/api/boards/root');
 if (root.cards.length) await api('POST', '/api/cards/delete', { ids: root.cards.map((c) => c.id) });
@@ -195,7 +195,8 @@ check(Math.abs(hb.x + hb.width - (cb.x + cb.width + 6)) < 3 && Math.abs(hb.y + h
 await page.locator(`[data-card-id="${c.id}"] .handle-resize`).hover();
 await sleep(550);
 check((await page.locator(`[data-card-id="${c.id}"] .handle-resize`).evaluate((e) => getComputedStyle(e, '::after').content)) === '"Resize"', 'resize handle has a tooltip');
-await page.locator('.toolbar .tool').first().hover();
+await showTools(page);
+await page.locator('.tb-tools .tool').first().hover();
 await sleep(550);
 await page.screenshot({ path: (process.env.SHOT_DIR || '.') + '/step5-tooltip.png' });
 
