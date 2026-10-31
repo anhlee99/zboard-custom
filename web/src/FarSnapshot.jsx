@@ -8,6 +8,7 @@ import { strokePath } from './ink.js';
 // picture and shown live. Text is not drawn; it is unreadable at this size anyway.
 
 const CARD_BG = { null: '#ffffff', yellow: '#fff3b8', green: '#d8f2d0', blue: '#d6e6ff', pink: '#ffd9e4', purple: '#e7dcff', grey: '#e6e4df' };
+const HEXC = /^#[0-9a-f]{6}$/i;
 const MAX_SIDE = 4096; // canvas size limit, in device pixels
 
 function roundRect(g, x, y, w, h, r) {
@@ -72,14 +73,25 @@ export default function FarSnapshot({ active, scale, worldRef, rects, cards, fil
         if (c.type === 'board') {
           const tile = el.querySelector('.board-icon');
           const tr = tile && { x: r.x + tile.offsetLeft, y: r.y + tile.offsetTop, w: tile.offsetWidth, h: tile.offsetHeight };
-          g.fillStyle = c.child?.cover?.bg || CARD_BG[c.color ?? 'null'] || '#ffffff';
+          g.fillStyle = c.child?.cover?.bg || (HEXC.test(c.color || '') ? c.color : CARD_BG[c.color ?? 'null']) || '#ffffff';
           if (tr) roundRect(g, tr.x, tr.y, tr.w, tr.h, 12);
           continue;
         }
         const cutout = c.type === 'image' && file?.alpha === 1;
-        if (!cutout) {
-          g.fillStyle = c.type === 'column' ? 'rgba(255,255,255,0.55)' : CARD_BG[c.color ?? 'null'] || '#ffffff';
+        const hexBg = HEXC.test(c.color || '') ? c.color : null;
+        if (!cutout || hexBg) {
+          g.fillStyle = hexBg || (c.type === 'column' ? 'rgba(255,255,255,0.55)' : CARD_BG[c.color ?? 'null'] || '#ffffff');
           roundRect(g, r.x, r.y, r.w, r.h, 6);
+        }
+        if (HEXC.test(c.data?.strip || '')) {
+          g.fillStyle = c.data.strip;
+          g.fillRect(r.x, r.y, r.w, Math.max(6, r.h * 0.03));
+        }
+        if (c.type === 'color') {
+          const sw = el.querySelector('.color-swatch');
+          g.fillStyle = HEXC.test(c.data?.hex || '') ? c.data.hex : '#ecbc1c';
+          g.fillRect(r.x, r.y, r.w, sw ? sw.offsetHeight : r.h * 0.7);
+          continue;
         }
         const img = el.querySelector(c.type === 'image' ? '.img-wrap img' : '.link-img, .video-frame img');
         const wrap = img?.closest('.img-wrap, .video-frame') || img;

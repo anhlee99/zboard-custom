@@ -2380,3 +2380,199 @@ kbd {
 .world.snap > .card:not(.selected):not(.dragging):not(.editing) {
   opacity: 0;
 }
+
+/* ---------- card colour picker (Background / Top strip) ---------- */
+.cp {
+  width: 236px;
+}
+.cp-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.cp-tabs button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.cp-tabs button.on {
+  background: var(--bg);
+  color: var(--ink);
+}
+.cp-tab-icon {
+  width: 22px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1.5px solid currentColor;
+  background: transparent;
+  overflow: hidden;
+}
+.cp-tab-icon.strip span {
+  display: block;
+  height: 4px;
+  background: currentColor;
+}
+.cp-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  padding: 2px;
+}
+.cp-recent {
+  border-top: 1px solid var(--line);
+  margin-top: 10px;
+  padding-top: 12px;
+}
+.cp-swatch {
+  width: 28px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  padding: 0;
+  cursor: pointer;
+  justify-self: center;
+}
+.cp-swatch.none {
+  background: repeating-conic-gradient(#d8d6d0 0% 25%, #ffffff 0% 50%) 0 0 / 8px 8px;
+}
+.cp-swatch.on {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.cp-custom {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.cp-custom:hover {
+  background: var(--bg);
+}
+.cp-wheel {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: conic-gradient(#ef4444, #f6c445, #6dd36d, #38bdb0, #4f7cf7, #a26bf0, #ec6fcf, #ef4444);
+}
+.cp-custom input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+/* the strip and a picked background on a card */
+.card-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 6px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.card.has-bg .note-body,
+.card.has-bg .todo-title,
+.card.has-bg .todo-text,
+.card.has-bg .caption {
+  color: inherit;
+}
+.card-image.cutout.has-bg {
+  box-shadow: var(--shadow);
+}
+
+/* ---------- colour cards ---------- */
+.card-color {
+  overflow: hidden;
+}
+.color-swatch {
+  height: 120px;
+  padding: 14px 16px;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.color-hex {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.color-name {
+  padding: 12px 16px 14px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.color-edit {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.color-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.color-well {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+}
+.color-well input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.color-hex-input,
+.color-name-input {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--ink);
+}
+.color-hex-input {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-transform: uppercase;
+}
+.color-dropper {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+}
+.color-dropper:hover {
+  background: var(--bg);
+}

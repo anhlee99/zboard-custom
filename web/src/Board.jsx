@@ -6,6 +6,7 @@ import CoverPicker from './Cover.jsx';
 import ImageEditor from './ImageEditor.jsx';
 import FarSnapshot from './FarSnapshot.jsx';
 import LabelPicker from './Labels.jsx';
+import ColorPicker from './ColorPicker.jsx';
 import DrawLayer from './Draw.jsx';
 import { inkBounds, mapStrokes } from './ink.js';
 import SavedPanel, { CLIP_DRAG_TYPE } from './SavedPanel.jsx';
@@ -43,6 +44,7 @@ const TOOLS = [
   { kind: 'todo', label: 'To-do', icon: 'todo' },
   { kind: 'link', label: 'Link', icon: 'link' },
   { kind: 'image', label: 'Image', icon: 'image' },
+  { kind: 'color', label: 'Color', icon: 'swatch' },
   { kind: 'board', label: 'Board', icon: 'board' },
   { kind: 'column', label: 'Column', icon: 'column' },
 ];
@@ -654,6 +656,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       else if (kind === 'todo') createCards([{ ...base, data: { title: '', items: [] } }], { edit: true });
       else if (kind === 'link') createCards([{ ...base, data: {} }], { edit: true });
       else if (kind === 'board') createCards([{ ...base, title: 'New board' }], { edit: true });
+      else if (kind === 'color') createCards([{ ...base, data: { hex: '#ecbc1c' } }], { edit: true });
       else if (kind === 'column') {
         if (at.column_id) return notify("Columns can't go inside columns");
         createCards([{ type: 'column', x: at.x, y: at.y, data: { title: '' } }], { edit: true });
@@ -714,6 +717,23 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       patchCards(patches, () => patchCards(back));
     },
     [patchCards]
+  );
+
+  // Eyedropper on an image: the picked colour becomes a colour card beside it (Chrome / Edge).
+  const pickColourFrom = useCallback(
+    async (c) => {
+      if (!('EyeDropper' in window)) return notify("This browser can't pick colours from the screen. Add a Color card and type the code.");
+      let hex;
+      try {
+        hex = (await new window.EyeDropper().open()).sRGBHex;
+      } catch {
+        return; // cancelled
+      }
+      const near = Object.values(S.current.cards).filter((k) => k.type === 'color' && Math.abs(k.y - c.y) < 400 && k.x > c.x).length;
+      const [made] = await createCards([{ type: 'color', x: c.x + (c.w || DEFAULT_W.image) + 24, y: c.y + near * 190, data: { hex } }]);
+      if (made) setSel(new Set([made.id]));
+    },
+    [createCards, notify]
   );
 
   // Swap an image card's picture, keeping its place, caption and labels.
@@ -876,6 +896,17 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       const before = ids.map((id) => ({ id, color: cs[id].color ?? null }));
       patchCards(ids.map((id) => ({ id, color })), () => patchCards(before));
       setColorOpen(false);
+    },
+    [patchCards]
+  );
+
+  // A coloured strip across the top of the selected cards (data.strip, a hex colour or null).
+  const setStrip = useCallback(
+    (strip, only) => {
+      const cs = S.current.cards;
+      const ids = pick(only).filter((id) => cs[id]);
+      const before = ids.map((id) => ({ id, data: { strip: cs[id].data.strip ?? null } }));
+      patchCards(ids.map((id) => ({ id, data: { strip } })), () => patchCards(before));
     },
     [patchCards]
   );
@@ -1970,7 +2001,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       } else if (t === 'drawing') out.push(act('Edit', 'draw', () => openDrawing(single), { aria: 'Edit drawing', tip: 'Edit drawing (double-click)' }));
       else out.push(act('Edit', 'edit', () => startEdit(single.id), { tip: 'Edit (Enter)' }));
     }
-    if (!selCards.every((c) => c.type === 'drawing')) out.push(act('Color', 'palette', openPop('color'), { aria: 'Colour', pop: 'color', tip: 'Colour' }));
+    if (!selCards.every((c) => c.type === 'drawing' || c.type === 'color')) out.push(act('Color', 'palette', openPop('color'), { aria: 'Colour', pop: 'color', tip: 'Colour' }));
     out.push(act('Labels', 'tag', openPop('labels'), { pop: 'labels', tip: 'Labels (searchable)' }));
     out.push(act('More', 'dots', openPop('more'), { pop: 'more', aria: 'More actions', tip: 'More' }));
     return out;
@@ -2000,11 +2031,13 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       );
     if (pop.kind === 'color')
       return (
-        <div className="pop-swatches">
-          {COLORS.map((c) => (
-            <button key={c.label} className={`swatch ${c.id ? 'c-' + c.id : 'none'}` + (single && (single.color || null) === (c.id || null) ? ' on' : '')} onClick={() => setColor(c.id)} data-tip={c.label} aria-label={c.label} />
-          ))}
-        </div>
+        <ColorPicker
+          bg={single?.color ?? null}
+          strip={single?.data.strip ?? null}
+          showStrip={!selCards.every((c) => c.type === 'board')}
+          onBg={(c) => setColor(c)}
+          onStrip={(c) => setStrip(c)}
+        />
       );
     if (pop.kind === 'labels') return <LabelPicker current={labelState} onToggle={toggleLabel} onClose={close} />;
     if (pop.kind === 'arrowColor' && arrowBar)
@@ -2034,6 +2067,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         rows.push(
           row('Open full size', 'open', () => openCard(single)),
           row('Download original', 'download', null, { href: `/files/${single.data.fileId}?original=1`, download: f?.name || 'image' }),
+          row('Pick a colour…', 'eyedropper', () => pickColourFrom(single)),
           row('Replace image…', 'replace', () => {
             replaceFor.current = single.id;
             replaceInput.current.click();

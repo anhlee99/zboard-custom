@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import { openDatabase } from './sqlite.js';
 
-export const CARD_TYPES = new Set(['note', 'todo', 'image', 'link', 'board', 'column', 'drawing']);
+export const CARD_TYPES = new Set(['note', 'todo', 'image', 'link', 'board', 'column', 'drawing', 'color']);
 export const newId = () => crypto.randomBytes(9).toString('base64url');
 export const isId = (s) => typeof s === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(s);
 
@@ -134,6 +134,8 @@ export function cardText(c) {
       return [d.title, d.description, d.url].filter(Boolean).join('\n');
     case 'column':
       return d.title || '';
+    case 'color':
+      return [d.hex, d.name].filter(Boolean).join('\n');
     default:
       return '';
   }
@@ -206,7 +208,10 @@ function cleanCrop(c) {
 // Drawing cards hold strokes; images may carry strokes drawn over them (data.ink).
 function cleanData(type, data) {
   const labels = 'labels' in data ? { labels: cleanLabels(data.labels) } : {};
+  if ('strip' in data) data = { ...data, strip: HEX.test(data.strip) ? data.strip.toLowerCase() : null }; // top-strip colour
   if (type === 'drawing') return { strokes: cleanStrokes(data.strokes), vw: size1(data.vw), vh: size1(data.vh), ...labels };
+  // Colour cards: one swatch, its hex and a name.
+  if (type === 'color') return { ...data, hex: HEX.test(data.hex) ? data.hex.toLowerCase() : '#ecbc1c', name: typeof data.name === 'string' ? data.name.trim().slice(0, 60) : '' };
   data = { ...data, ...labels };
   if (type === 'image') {
     if ('ink' in data) {

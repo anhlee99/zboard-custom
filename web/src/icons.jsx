@@ -47,6 +47,8 @@ const PATHS = {
   undo: 'M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3',
   redo: 'M15 14l5-5-5-5 M20 9H10a6 6 0 0 0 0 12h3',
   chevronLeft: 'M15 5l-7 7 7 7',
+  swatch: 'M5 3h8v18H5z M13 7.5l6.2 3.2L13 21 M9 17h.01',
+  eyedropper: 'M14.5 4.5l5 5 M17 2l5 5-3 3-5-5z M14 8L5 17l-1 3 3-1 9-9',
   tag: 'M3 12V4h8l10 10-8 8z M7.5 7.5h.01',
   caption: 'M4 4h16v11H4z M7 19h10',
   crop: 'M6 2v14h14 M2 6h14v14',

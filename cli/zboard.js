@@ -261,6 +261,8 @@ function titleOf(card, files = {}) {
       return d.title || 'Column';
     case 'drawing':
       return `Drawing (${(d.strokes || []).length} strokes)`;
+    case 'color':
+      return `${(d.hex || '').toUpperCase()}${d.name ? ' ' + d.name : ''}`;
     default:
       return card.type;
   }
@@ -468,7 +470,7 @@ async function showImage(fileId, file) {
 }
 
 // ---------- formatting ----------
-const TYPE_TAG = { board: blue('board '), note: 'note  ', todo: green('todo  '), link: yellow('link  '), image: paint('35')('image '), column: dim('column'), drawing: paint('36')('draw  ') };
+const TYPE_TAG = { board: blue('board '), note: 'note  ', todo: green('todo  '), link: yellow('link  '), image: paint('35')('image '), column: dim('column'), drawing: paint('36')('draw  '), color: paint('33')('color ') };
 
 function rowFor(card, files, n, depth, long) {
   const d = card.data || {};

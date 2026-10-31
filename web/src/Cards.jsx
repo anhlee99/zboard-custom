@@ -5,6 +5,11 @@ import { CoverTile } from './Cover.jsx';
 import { strokePath } from './ink.js';
 import { LabelChips } from './Labels.jsx';
 import { rotatedImgStyle } from './ImageEditor.jsx';
+import { inkFor } from './Cover.jsx';
+import { colorName } from './colorNames.js';
+
+// Card colour: the old named pastels ('yellow', …) are classes; a picked colour is a hex value.
+const isHex = (c) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
 
 // lowRes is 'thumb' | 'mini' | 'micro' (older code passed true/false).
 const sizeName = (v) => (v === true ? 'mini' : v === false || !v ? 'thumb' : v);
@@ -347,7 +352,7 @@ function BoardBody({ card, editing, actions }) {
   const child = card.child;
   return (
     <div className="board-body">
-      <CoverTile cover={child?.cover} fallback={<Icon name="board" size={28} />} />
+      <CoverTile cover={child?.cover?.bg || !isHex(card.color) ? child?.cover : { ...(child?.cover || {}), bg: card.color }} fallback={<Icon name="board" size={28} />} />
       {editing ? (
         <input
           className="board-title-input"
@@ -427,7 +432,73 @@ function DrawingBody({ card }) {
   );
 }
 
-const BODIES = { note: NoteBody, todo: TodoBody, image: ImageBody, link: LinkBody, board: BoardBody, drawing: DrawingBody };
+// A colour swatch: the colour, its hex code and a name (the nearest web colour name unless typed).
+// Editing: hex code, the system colour picker, and an eyedropper where the browser has one.
+function ColorBody({ card, editing, actions }) {
+  const d = card.data;
+  const hex = isHex(d.hex) ? d.hex.toLowerCase() : '#ecbc1c';
+  const timer = useRef(0);
+  const setHex = (h) => isHex(h) && h.toLowerCase() !== hex && actions.saveData(card.id, { hex: h.toLowerCase() });
+  const fromScreen = async () => {
+    try {
+      const r = await new window.EyeDropper().open();
+      setHex(r.sRGBHex);
+    } catch {}
+  };
+  const commitOnEnter = (e) => e.key === 'Enter' && e.target.blur();
+  return (
+    <>
+      <div className="color-swatch" style={{ background: hex, color: inkFor(hex) }}>
+        <span className="color-hex">{hex.toUpperCase()}</span>
+      </div>
+      {editing ? (
+        <div className="color-edit" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && actions.stopEdit(card.id)}>
+          <div className="color-edit-row">
+            <label className="color-well" style={{ background: hex }} data-tip="Choose a colour">
+              <input
+                type="color"
+                defaultValue={hex}
+                aria-label="Choose a colour"
+                // The system picker reports every drag step; save once it rests.
+                onChange={(e) => {
+                  const v = e.target.value;
+                  clearTimeout(timer.current);
+                  timer.current = setTimeout(() => setHex(v), 250);
+                }}
+              />
+            </label>
+            <input
+              className="color-hex-input"
+              key={hex}
+              autoFocus
+              defaultValue={hex.toUpperCase()}
+              aria-label="Hex code"
+              onKeyDown={commitOnEnter}
+              onBlur={(e) => setHex('#' + e.target.value.trim().replace(/^#/, ''))}
+            />
+            {'EyeDropper' in window && (
+              <button className="color-dropper" onMouseDown={(e) => e.preventDefault()} onClick={fromScreen} data-tip="Pick a colour from the screen" aria-label="Pick a colour from the screen">
+                <Icon name="eyedropper" size={16} />
+              </button>
+            )}
+          </div>
+          <input
+            className="color-name-input"
+            defaultValue={d.name || ''}
+            placeholder={colorName(hex)}
+            aria-label="Colour name"
+            onKeyDown={commitOnEnter}
+            onBlur={(e) => e.target.value.trim() !== (d.name || '') && actions.saveData(card.id, { name: e.target.value.trim() })}
+          />
+        </div>
+      ) : (
+        <div className="color-name">{d.name || colorName(hex)}</div>
+      )}
+    </>
+  );
+}
+
+const BODIES = { note: NoteBody, todo: TodoBody, image: ImageBody, link: LinkBody, board: BoardBody, drawing: DrawingBody, color: ColorBody };
 
 export const CardView = memo(function CardView(props) {
   const { card, inColumn, selected, editing, dragging, cut, hidden } = props;
@@ -439,14 +510,16 @@ export const CardView = memo(function CardView(props) {
     if (mounted.current) setLowRes(props.lowRes);
     mounted.current = true;
   }, [props.lowRes, props.settledS]);
-  const style = inColumn ? undefined : { left: card.x, top: card.y, width: card.w || DEFAULT_W[card.type], zIndex: card.z };
+  const bg = isHex(card.color) && card.type !== 'board' ? { background: card.color, color: inkFor(card.color) === '#ffffff' ? '#f5f5f4' : undefined } : null;
+  const style = inColumn ? bg || undefined : { left: card.x, top: card.y, width: card.w || DEFAULT_W[card.type], zIndex: card.z, ...bg };
   const cutout = card.type === 'image' && props.file?.alpha === 1; // see-through PNG: no card frame
-  const cls = ['card', `card-${card.type}`, cutout && 'cutout', selected && 'selected', editing && 'editing', dragging && 'dragging', cut && 'cut', hidden && (card.type === 'image' ? 'ink-hide' : 'ink-editing'), card.color && `c-${card.color}`, inColumn && 'in-column']
+  const cls = ['card', `card-${card.type}`, cutout && 'cutout', selected && 'selected', editing && 'editing', dragging && 'dragging', cut && 'cut', hidden && (card.type === 'image' ? 'ink-hide' : 'ink-editing'), card.color && !isHex(card.color) && `c-${card.color}`, isHex(card.color) && 'has-bg', inColumn && 'in-column']
     .filter(Boolean)
     .join(' ');
   const Body = card.type === 'column' ? ColumnBody : BODIES[card.type];
   return (
     <div className={cls} style={style} data-card-id={card.id} data-drop-board={card.type === 'board' ? card.data.boardId : undefined}>
+      {card.data?.strip && card.type !== 'board' && <div className="card-strip" style={{ background: card.data.strip }} />}
       {Body && <Body {...props} lowRes={lowRes} />}
       {card.type !== 'image' && card.type !== 'column' && <LabelChips labels={card.data.labels} />}
       {selected && !inColumn && !editing && (

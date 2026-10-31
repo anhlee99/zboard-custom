@@ -51,9 +51,32 @@ check((await page.locator('.toolbar.show-actions').count()) === 0 && (await page
 // Colour from the panel.
 await card(n1).click();
 await act('Colour').click();
-await page.locator('.action-pop [aria-label="Yellow"]').click();
+check((await page.locator('.action-pop .cp-tabs button').allTextContents()).join('|') === 'Background|Top strip', 'Color opens the picker with Background and Top strip');
+await page.locator('.action-pop [aria-label="Colour #ffd44f"]').click();
 await sleep(400);
-check((await fresh(n1)).color === 'yellow', 'Color sets the card colour');
+check((await fresh(n1)).color === '#ffd44f' && (await card(n1).evaluate((e) => getComputedStyle(e).backgroundColor)) === 'rgb(255, 212, 79)', 'Background colour fills the card');
+await page.locator('.action-pop .cp-tabs button', { hasText: 'Top strip' }).click();
+await page.locator('.action-pop [aria-label="Colour #5a86f7"]').click();
+await sleep(400);
+check((await fresh(n1)).data.strip === '#5a86f7' && (await card(n1).locator('.card-strip').count()) === 1, 'Top strip draws a coloured band across the card');
+await page.locator('.action-pop [aria-label="No colour"]').click();
+await sleep(400);
+check(!(await fresh(n1)).data.strip && (await card(n1).locator('.card-strip').count()) === 0, 'No colour removes the strip');
+await page.keyboard.press('Control+z');
+await sleep(400);
+check((await fresh(n1)).data.strip === '#5a86f7', 'undo brings the strip back');
+// A see-through picture gets a coloured background behind it; a custom colour joins the recent row.
+await page.mouse.click(1300, 700);
+await card(img).locator('.img-wrap').click();
+await act('Colour').click();
+await page.locator('.action-pop .cp-custom input').fill('#123456');
+await sleep(700);
+check((await fresh(img)).color === '#123456', 'a custom colour is applied');
+check((await page.locator('.action-pop .cp-recent [aria-label="Colour #123456"]').count()) === 1, 'and shows up in the recent colours');
+await page.locator('.action-pop [aria-label="No colour"]').click();
+await sleep(400);
+check(!(await fresh(img)).color, 'No colour clears the background');
+await page.mouse.click(1300, 700);
 
 // Labels: create, reuse, show as chips, search, apply to several cards.
 await card(img).locator('.img-wrap').click();
