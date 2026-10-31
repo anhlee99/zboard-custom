@@ -115,6 +115,8 @@ has "$(Z whoami)" "/tmp/zb-cli-config/zboard/config.json" "config.json beats cli
 has "$(ZBOARD_URL=http://localhost:3000 ZBOARD_TOKEN=wrong Z whoami 2>&1)" "rejected the token from ZBOARD_URL + ZBOARD_TOKEN" "env vars come first"
 has "$(Z logout)" "Still connected through /tmp/zb-e2e/cli-token" "logout falls back to the token file"
 has "$(printf 'wrong\n' | Z login http://localhost:3000 2>&1)" "Wrong password" "login with a wrong password fails clearly"
-has "$(DATA_DIR=/nonexistent Z ls 2>&1)" "Not connected" "no token anywhere: clear message"
+# A copy of the CLI away from the repo: the repo's own data/cli-token (a real server's) must not count.
+rm -rf /tmp/zb-cli-bare && mkdir -p /tmp/zb-cli-bare/cli && cp cli/zboard.js /tmp/zb-cli-bare/cli/
+has "$(DATA_DIR=/nonexistent node /tmp/zb-cli-bare/cli/zboard.js ls 2>&1)" "Not connected" "no token anywhere: clear message"
 
 echo "FAILS=$FAILS"
