@@ -763,6 +763,12 @@ input {
 .zoom-pct:hover {
   background: var(--bg);
 }
+.zoom-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--line);
+}
 
 .lightbox {
   position: fixed;

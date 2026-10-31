@@ -119,6 +119,27 @@ check((await page.locator('.zoom-pct').textContent()) === '125%', '+ zooms in');
 await page.keyboard.press('0');
 check((await page.locator('.zoom-pct').textContent()) === '100%', '0 resets zoom');
 
+// --- fit to screen sits in the zoom control, and on Shift+1 ---
+const allInView = () =>
+  page.evaluate(() => {
+    const c = document.querySelector('.canvas').getBoundingClientRect();
+    return [...document.querySelectorAll('.world > .card')].every((e) => {
+      const r = e.getBoundingClientRect();
+      return r.left >= c.left - 1 && r.top >= c.top - 1 && r.right <= c.right + 1 && r.bottom <= c.bottom + 1;
+    });
+  });
+await page.keyboard.press('+');
+await page.keyboard.press('+');
+await page.click('.zoom-ctl [aria-label="Fit to screen"]');
+await sleep(300);
+check(await allInView(), 'Fit to screen button (next to zoom) shows every card');
+await page.keyboard.press('+');
+await page.keyboard.press('+');
+await page.keyboard.press('Shift+Digit1');
+await sleep(300);
+check(await allInView(), 'Shift+1 fits to screen too');
+await page.keyboard.press('0');
+
 // --- phone size smoke ---
 const phone = await login(browser, { width: 390, height: 844 });
 await phone.page.waitForSelector('.card-todo');

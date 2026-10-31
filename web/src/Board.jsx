@@ -1607,6 +1607,10 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       } else if (!mod && (e.key === '+' || e.key === '=')) zoomCenter(1.25);
       else if (!mod && (e.key === '-' || e.key === '_')) zoomCenter(0.8);
       else if (!mod && e.key === '0') zoomCenter(1 / S.current.view.s);
+      else if (!mod && e.shiftKey && e.code === 'Digit1') {
+        e.preventDefault();
+        fitAll();
+      }
     };
     const upKey = (e) => {
       if (e.key === ' ') {
@@ -1666,7 +1670,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       window.removeEventListener('copy', copyOrCut);
       window.removeEventListener('cut', copyOrCut);
     };
-  }, [lightbox, undo, duplicate, deleteArrow, deleteCards, startEdit, zoomCenter, selectAll, copySelection, pasteClip, pointerWorld, addImages, addLink, addText]);
+  }, [lightbox, undo, duplicate, deleteArrow, deleteCards, startEdit, zoomCenter, fitAll, selectAll, copySelection, pasteClip, pointerWorld, addImages, addLink, addText]);
 
   const onDragOver = (e) => {
     const types = [...e.dataTransfer.types];
@@ -2203,6 +2207,10 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
           </button>
           <button className="icon-btn" onClick={() => zoomCenter(1.25)} data-tip="Zoom in (+)" aria-label="Zoom in">
             <Icon name="plus" size={16} />
+          </button>
+          <span className="zoom-sep" />
+          <button className="icon-btn" onClick={fitAll} data-tip="Fit to screen (Shift+1)" aria-label="Fit to screen">
+            <Icon name="fit" size={16} />
           </button>
         </div>
       </div>
