@@ -474,7 +474,11 @@ function ColorBody({ card, editing, actions }) {
               defaultValue={hex.toUpperCase()}
               aria-label="Hex code"
               onKeyDown={commitOnEnter}
-              onBlur={(e) => setHex('#' + e.target.value.trim().replace(/^#/, ''))}
+              onBlur={(e) => {
+                const v = '#' + e.target.value.trim().replace(/^#/, '');
+                if (isHex(v)) setHex(v);
+                else e.target.value = hex.toUpperCase(); // not a colour: show the current one again
+              }}
             />
             {'EyeDropper' in window && (
               <button className="color-dropper" onMouseDown={(e) => e.preventDefault()} onClick={fromScreen} data-tip="Pick a colour from the screen" aria-label="Pick a colour from the screen">

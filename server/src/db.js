@@ -211,7 +211,7 @@ function cleanData(type, data) {
   if ('strip' in data) data = { ...data, strip: HEX.test(data.strip) ? data.strip.toLowerCase() : null }; // top-strip colour
   if (type === 'drawing') return { strokes: cleanStrokes(data.strokes), vw: size1(data.vw), vh: size1(data.vh), ...labels };
   // Colour cards: one swatch, its hex and a name.
-  if (type === 'color') return { ...data, hex: HEX.test(data.hex) ? data.hex.toLowerCase() : '#ecbc1c', name: typeof data.name === 'string' ? data.name.trim().slice(0, 60) : '' };
+  if (type === 'color') return { ...data, ...labels, hex: HEX.test(data.hex) ? data.hex.toLowerCase() : '#ecbc1c', name: typeof data.name === 'string' ? data.name.trim().slice(0, 60) : '' };
   data = { ...data, ...labels };
   if (type === 'image') {
     if ('ink' in data) {

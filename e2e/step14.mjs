@@ -11,8 +11,9 @@ const boardId = holder.cards[0].child.id;
 const [img] = (await api('POST', `/api/boards/${boardId}/cards`, { cards: [{ type: 'image', x: 600, y: 80, w: 300, data: { fileId: file.id } }] })).cards;
 const colours = async () => (await api('GET', `/api/boards/${boardId}`)).cards.filter((c) => c.type === 'color');
 
-const bad = (await api('POST', `/api/boards/${boardId}/cards`, { cards: [{ type: 'color', x: 0, y: 900, data: { hex: 'red', name: 'x'.repeat(200) } }] })).cards[0];
+const bad = (await api('POST', `/api/boards/${boardId}/cards`, { cards: [{ type: 'color', x: 0, y: 900, data: { hex: 'red', name: 'x'.repeat(200), labels: [' Skin ', 'Skin', '', 42] } }] })).cards[0];
 check(bad.data.hex === '#ecbc1c' && bad.data.name.length === 60, 'server keeps hex codes only and short names');
+check(JSON.stringify(bad.data.labels) === '["Skin","42"]', 'labels on colour cards are cleaned like on other cards', JSON.stringify(bad.data.labels));
 await api('POST', '/api/cards/delete', { ids: [bad.id] });
 
 const browser = await launch();
@@ -48,6 +49,15 @@ check((await card.locator('.color-swatch').evaluate((e) => getComputedStyle(e).b
 await page.mouse.click(1300, 700);
 await sleep(300);
 check((await card.locator('.color-hex').textContent()) === '#2F4F4F' && (await card.locator('.color-name').textContent()) === 'Dark Slate Gray', 'the card shows the hex code and a colour name');
+
+// A typo in the hex box snaps back to the current colour.
+await card.dblclick();
+await card.locator('.color-hex-input').fill('zzz');
+await page.keyboard.press('Enter');
+await sleep(300);
+check((await card.locator('.color-hex').textContent()) === '#2F4F4F' && (await colours())[0].data.hex === '#2f4f4f', 'an invalid hex code is ignored; the card keeps its colour');
+await page.mouse.click(1300, 700);
+await sleep(300);
 
 // Rename it.
 await card.dblclick();

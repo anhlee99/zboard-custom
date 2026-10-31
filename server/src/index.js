@@ -491,7 +491,7 @@ function smallCopy(name, px, quality, pathOf) {
     const out = pathOf(f.id);
     if (!fs.existsSync(out)) {
       if (!fs.existsSync(thumbPath(f.id))) throw new HttpError(404, 'No thumbnail for this file');
-      const key = name + f.id;
+      const key = `${name}:${f.id}`;
       if (!sizeJobs.has(key)) {
         const job = sharp(thumbPath(f.id))
           .resize(px, px, { fit: 'inside', withoutEnlargement: true })
