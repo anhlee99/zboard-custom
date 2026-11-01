@@ -8,6 +8,8 @@ import { rotatedImgStyle } from './ImageEditor.jsx';
 import { inkFor } from './Cover.jsx';
 import { colorName } from './colorNames.js';
 
+const TOUCH = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+
 // Card colour: the old named pastels ('yellow', …) are classes; a picked colour is a hex value.
 const isHex = (c) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
 
@@ -528,6 +530,12 @@ export const CardView = memo(function CardView(props) {
       {card.type !== 'image' && card.type !== 'column' && <LabelChips labels={card.data.labels} />}
       {selected && !inColumn && !editing && (
         <>
+          {/* Touch screens: drag from here right away instead of holding the card. Same size on screen at any zoom. */}
+          {TOUCH && (
+            <div className="handle handle-move" data-handle="move" aria-label="Move" style={{ '--hs': 1 / (props.settledS || 1) }}>
+              <Icon name="move" size={18} />
+            </div>
+          )}
           <div className="handle handle-resize" data-handle="resize" data-tip="Resize" />
           <div className="handle handle-arrow" data-handle="arrow" data-tip="Drag to a card to connect" />
         </>

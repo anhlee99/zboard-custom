@@ -1257,7 +1257,9 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         const id = t.closest('[data-card-id]').dataset.cardId;
         const c = S.current.cards[id];
         e.preventDefault();
-        if (t.closest('[data-handle]').dataset.handle === 'resize') g = { type: 'resize', id, sx: e.clientX, w0: c.w || DEFAULT_W[c.type] };
+        const handle = t.closest('[data-handle]').dataset.handle;
+        if (handle === 'resize') g = { type: 'resize', id, sx: e.clientX, w0: c.w || DEFAULT_W[c.type] };
+        else if (handle === 'move') g = { type: 'maybe-drag', ids: S.current.sel.has(id) ? [...S.current.sel] : [id], sx: e.clientX, sy: e.clientY };
         else g = { type: 'arrow', from: id };
       } else if (t.closest('input, textarea, select, button, a, [contenteditable="true"], .float-bar, .format-bar')) {
         return;

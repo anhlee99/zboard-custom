@@ -333,6 +333,38 @@ input {
   border: 2px solid var(--accent);
   cursor: nwse-resize;
 }
+/* Touch screens: a grab handle off the card's top-left corner (the browser's long-press menu gets in the way otherwise). */
+.handle-move {
+  display: flex;
+  left: calc(-44px * var(--hs, 1));
+  top: calc(-44px * var(--hs, 1));
+  width: 40px;
+  height: 40px;
+  transform: scale(var(--hs, 1));
+  transform-origin: 0 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: var(--shadow);
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+/* No "Save image / Copy / Open" menu when holding a card on iOS and Android. */
+.canvas img,
+.canvas .card {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.canvas .card.editing,
+.canvas .card.editing *,
+.canvas .card input,
+.canvas .card textarea,
+.canvas .card [contenteditable='true'] {
+  -webkit-user-select: text;
+  user-select: text;
+}
 .handle-arrow {
   right: -22px;
   top: 50%;
