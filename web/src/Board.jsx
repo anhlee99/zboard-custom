@@ -927,6 +927,42 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     patchCards(ids.map((id) => ({ id, z: --z })), () => patchCards(before));
   }, [patchCards]);
 
+  // Tidy the selection into a grid from its top-left corner, in reading order (rows top to bottom,
+  // left to right). Each column is as wide as its widest card, each row as tall as its tallest.
+  // A selection that already sits in one row (or one column) stays that way.
+  const arrangeGrid = useCallback(() => {
+    const cs = S.current.cards;
+    const items = [...S.current.sel]
+      .filter((id) => cs[id] && !cs[id].column_id)
+      .map((id) => ({ id, r: rects.current.get(id) || { x: cs[id].x, y: cs[id].y, w: cs[id].w || DEFAULT_W[cs[id].type], h: 200 } }));
+    if (items.length < 2) return;
+    const GAP = 24;
+    items.sort((a, b) => a.r.y + a.r.h / 2 - (b.r.y + b.r.h / 2));
+    const rows = [];
+    for (const it of items) {
+      const row = rows[rows.length - 1];
+      const mid = it.r.y + it.r.h / 2;
+      if (row && mid - row.mid < Math.min(row.h, it.r.h) / 2) row.items.push(it);
+      else rows.push({ mid, h: it.r.h, items: [it] });
+    }
+    const ordered = rows.flatMap((row) => row.items.sort((a, b) => a.r.x - b.r.x));
+    const cols = rows.length === 1 ? ordered.length : rows.every((row) => row.items.length === 1) ? 1 : Math.ceil(Math.sqrt(ordered.length));
+    const colW = [];
+    const rowH = [];
+    ordered.forEach((it, i) => {
+      colW[i % cols] = Math.max(colW[i % cols] || 0, it.r.w);
+      rowH[Math.floor(i / cols)] = Math.max(rowH[Math.floor(i / cols)] || 0, it.r.h);
+    });
+    const x0 = Math.min(...items.map((it) => it.r.x));
+    const y0 = Math.min(...items.map((it) => it.r.y));
+    const colX = colW.map((_, c) => x0 + colW.slice(0, c).reduce((s, w) => s + w + GAP, 0));
+    const rowY = rowH.map((_, r) => y0 + rowH.slice(0, r).reduce((s, h) => s + h + GAP, 0));
+    const patches = ordered.map((it, i) => ({ id: it.id, x: Math.round(colX[i % cols]), y: Math.round(rowY[Math.floor(i / cols)]) }));
+    const moved = patches.filter((p) => p.x !== cs[p.id].x || p.y !== cs[p.id].y);
+    const before = moved.map((p) => ({ id: p.id, x: cs[p.id].x, y: cs[p.id].y }));
+    patchCards(moved, () => patchCards(before));
+  }, [patchCards]);
+
   const selectAll = useCallback(() => {
     const cs = S.current.cards;
     setSel(new Set(Object.values(cs).filter((c) => !c.column_id || !cs[c.column_id]).map((c) => c.id)));
@@ -2003,6 +2039,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     }
     if (!selCards.every((c) => c.type === 'drawing' || c.type === 'color')) out.push(act('Color', 'palette', openPop('color'), { aria: 'Colour', pop: 'color', tip: 'Colour' }));
     out.push(act('Labels', 'tag', openPop('labels'), { pop: 'labels', tip: 'Labels (searchable)' }));
+    if (selCards.filter((c) => !c.column_id).length > 1) out.push(act('Arrange', 'grid', arrangeGrid, { aria: 'Arrange in a grid', tip: 'Arrange in a tidy grid' }));
     out.push(act('More', 'dots', openPop('more'), { pop: 'more', aria: 'More actions', tip: 'More' }));
     return out;
   }

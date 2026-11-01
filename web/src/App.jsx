@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, setUnauthorizedHandler } from './api.js';
 import Board from './Board.jsx';
 import { Icon } from './icons.jsx';
@@ -49,8 +49,25 @@ export default function App() {
   const [info, setInfo] = useState({ board: null, breadcrumbs: [] });
   const [search, setSearch] = useState(null);
   const [menu, setMenu] = useState(false);
-  const [savedOpen, setSavedOpen] = useState(false);
+  const [savedOpen, setSavedOpen] = useState(false); // false, true (opened by hand) or 'auto'
   const [clipCount, setClipCount] = useState(0);
+  // Saved items open by themselves on a board that has some, once per visit: closing the panel
+  // keeps it closed there, and one that opened by itself closes again on the next board.
+  const autoShown = useRef(null);
+  useEffect(() => {
+    autoShown.current = null;
+    setSavedOpen((o) => (o === 'auto' ? false : o));
+  }, [route.board]);
+  const onClipCount = useCallback(
+    (n) => {
+      setClipCount(n);
+      if (n > 0 && autoShown.current !== route.board) {
+        autoShown.current = route.board;
+        setSavedOpen((o) => o || 'auto');
+      }
+    },
+    [route.board]
+  );
   const [renaming, setRenaming] = useState(false);
 
   useEffect(() => {
@@ -161,9 +178,9 @@ export default function App() {
         boardId={route.board}
         focus={route.focus}
         onInfo={setInfo}
-        savedOpen={savedOpen}
+        savedOpen={!!savedOpen}
         onCloseSaved={() => setSavedOpen(false)}
-        onClipCount={setClipCount}
+        onClipCount={onClipCount}
       />
       {search && <Search initial={search} onClose={() => setSearch(null)} />}
       {menu && <Menu boardId={route.board} boardTitle={info.board?.title} onClose={() => setMenu(false)} onLogout={logout} />}

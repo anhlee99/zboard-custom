@@ -11,6 +11,7 @@ import cron from 'node-cron';
 import { ZipArchive } from 'archiver';
 import { createStore, HttpError, isId, newId } from './db.js';
 import { drawingSvg } from './ink.js';
+import { importMilanote } from './milanote.js';
 import { createDrive, createLocalBackups } from './backup.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -315,6 +316,13 @@ app.post('/api/upload', upload.array('file', 50), async (req, res) => {
   }
   if (!files.length) throw new HttpError(400, 'No file sent (use the form field "file")');
   res.status(201).json({ file: files[0], files });
+});
+
+// ---- Milanote import (pictures go through /api/upload first; see milanote.js) ----
+app.post('/api/import/milanote', (req, res) => {
+  const out = importMilanote(store, req.body ?? {}, { parentId: req.body?.parentId || 'root', newId });
+  emit(out.card.board_id, 'cards', { cards: [out.card] }, null);
+  res.status(201).json(out);
 });
 
 // ---- remote fetches (link previews, images dragged from other sites) ----
