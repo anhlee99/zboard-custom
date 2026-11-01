@@ -124,8 +124,9 @@ OpenSSH Server (Settings → System → Optional features → OpenSSH Server, th
 2. Open `edge://extensions` (or `chrome://extensions`), turn on **Developer mode**, **Load unpacked**, pick the folder.
 3. Click the ZBoard Clipper icon and paste the server address and token shown in the menu.
 
-Then right-click an image, link, selection or page → **Save to ZBoard** → your default board or any board
-in the tree. The popup can save the page link or pick several images at once. Saved things wait in the board's
+Then hover any image and click the **Save** button in its corner: pick a board (type to search, Enter saves;
+the last board used is at the top). Or right-click an image, link, selection or page → **Save to ZBoard** →
+your default board or any board in the tree. The hover button can be switched off in the popup. The popup can save the page link or pick several images at once. Saved things wait in the board's
 **Saved items** panel (inbox icon in the top bar); drag them onto the canvas.
 If you press **New token**, the extension says so and asks you to reconnect.
 

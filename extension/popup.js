@@ -98,6 +98,8 @@ async function showMain() {
   }
   $('board').value = boards.some((b) => b.id === s.board) ? s.board : boards[0]?.id;
   $('board').onchange = () => chrome.storage.local.set({ board: $('board').value });
+  $('hover').checked = (await chrome.storage.local.get('hover')).hover !== false;
+  $('hover').onchange = () => chrome.storage.local.set({ hover: $('hover').checked });
 
   tab = forcedTab ? await chrome.tabs.get(forcedTab) : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
   const pageOk = tab?.url && /^https?:/.test(tab.url) && (!asPage || forcedTab);

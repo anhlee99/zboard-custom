@@ -54,6 +54,17 @@
         color: var(--ink-2);
         margin: 8px 0 3px;
       }
+      label.check {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 12px;
+        cursor: pointer;
+      }
+      label.check input {
+        width: auto;
+        margin: 0;
+      }
       input,
       select {
         width: 100%;
@@ -195,6 +206,7 @@
         <button id="save-images" class="primary" disabled>Save images</button>
       </div>
       <div id="status" class="status"></div>
+      <label class="check"><input type="checkbox" id="hover" /> Show a Save button on images</label>
     </main>
 
     <script type="module" src="popup.js"></script>

@@ -139,7 +139,7 @@ async function saveImages({ items, board, page, tabId }) {
   return { saved, failed: items.length - saved, error: error?.message };
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.type === 'rebuild') {
     rebuildMenus().then(() => reply({ ok: true }));
     return true;
@@ -147,6 +147,29 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg?.type === 'saveImages') {
     saveImages(msg).then(reply);
     return true;
+  }
+  // The hover button (hover.js): the board list for its picker, then the save itself.
+  if (msg?.type === 'boards') {
+    (async () => {
+      const s = await settings();
+      const tree = boardTree(await listBoards());
+      const byId = new Map(tree.map((b) => [b.id, b]));
+      const path = (b) => (b.parent_id && byId.has(b.parent_id) ? [...path(byId.get(b.parent_id)), b.parent_id] : []);
+      return { tree: tree.map((b) => ({ id: b.id, title: b.title, depth: b.depth, path: path(b).map((id) => byId.get(id).title || 'Untitled').join(' › ') })), last: s.board };
+    })()
+      .then(reply)
+      .catch((e) => reply({ error: e.message }));
+    return true;
+  }
+  if (msg?.type === 'quickSave') {
+    const tabId = sender.tab?.id;
+    saveImage({ src: msg.src, alt: msg.alt, board: msg.board, page: msg.page })
+      .then(() => {
+        chrome.storage.local.set({ board: msg.board }); // remembered as "last used" (and the right-click default)
+        report(tabId, true, 'Saved to ZBoard');
+      })
+      .catch((e) => report(tabId, false, e.message));
+    return false;
   }
   return false;
 });
