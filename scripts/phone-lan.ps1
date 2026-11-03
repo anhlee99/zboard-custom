@@ -14,7 +14,10 @@ if ($net.NetworkCategory -ne 'Private') {
 }
 
 # 2. Pass the port on to WSL's current address.
-$wsl = ((wsl hostname -I) -split '\s+' | Where-Object { $_ })[0]
+# wsl.exe can answer in UTF-16 (seen from admin terminals): drop the NUL bytes and pick out the address.
+$raw = (wsl.exe -e hostname -I | Out-String) -replace "`0", ''
+$wsl = [regex]::Match($raw, '\b\d{1,3}(\.\d{1,3}){3}\b').Value
+if (-not $wsl) { throw "Couldn't read WSL's address (got '$raw'). Is WSL running?" }
 netsh interface portproxy delete v4tov4 listenport=$port listenaddress=0.0.0.0 2>$null | Out-Null
 netsh interface portproxy add v4tov4 listenport=$port listenaddress=0.0.0.0 connectport=$port connectaddress=$wsl | Out-Null
 Write-Host "Port $port forwarded to WSL at $wsl."
