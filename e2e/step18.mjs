@@ -30,7 +30,7 @@ await sleep(400);
 const handle = card.locator('[data-handle="move"]');
 check(await handle.isVisible(), 'tapping a card shows the move handle');
 const hb = await handle.boundingBox();
-check(hb.width >= 36 && hb.width <= 44 && hb.x + hb.width <= box0.x + 2 && hb.y + hb.height <= box0.y + 2, 'handle is about 40 px on screen, just outside the top-left corner', JSON.stringify({ hb, box0 }));
+check(hb.width >= 36 && hb.width <= 44 && Math.abs(hb.x + hb.width / 2 - box0.x) < 3 && Math.abs(hb.y + hb.height / 2 - box0.y) < 3, 'handle is about 40 px on screen, centred on the top-left corner', JSON.stringify({ hb, box0 }));
 
 // Drag the handle with a real touch: it moves at once, no hold.
 const cdp = await context.newCDPSession(page);
@@ -61,6 +61,129 @@ await sleep(400);
 const view1 = await card.boundingBox();
 const after = (await api('GET', `/api/boards/${boardId}`)).cards.find((c) => c.id === id);
 check(view1.x < view0.x - 40 && after.x === saved.x, 'swiping empty space pans the board', JSON.stringify({ dx: view1.x - view0.x }));
+// The big resize handle off the bottom-right corner: drag it and the card gets wider.
+await api('PATCH', '/api/cards', { cards: [{ id, x: 40, y: 80 }] });
+await page.reload();
+await page.waitForSelector(`[data-card-id="${id}"] img`);
+await sleep(600);
+const pre = await card.boundingBox();
+await page.touchscreen.tap(pre.x + pre.width / 2, pre.y + pre.height / 2);
+await sleep(400);
+const rb0 = await card.boundingBox(); // selected: the caption row makes an image card taller
+const rh =await card.locator('[data-handle="resize"]').boundingBox();
+check(rh && rh.width >= 36 && Math.abs(rh.x + rh.width / 2 - (rb0.x + rb0.width)) < 3 && Math.abs(rh.y + rh.height / 2 - (rb0.y + rb0.height)) < 3, 'tapping a card shows a large resize handle centred on its bottom-right corner', JSON.stringify({ rh, rb0 }));
+const hit = await page.evaluate(([x, y]) => { const e = document.elementFromPoint(x, y); return e && (e.closest('[data-handle]')?.dataset.handle || e.className?.baseVal || e.className); }, [rh.x + rh.width / 2, rh.y + rh.height / 2]);
+check(hit === 'resize', 'the finger lands on the resize handle', String(hit));
+await touch('touchStart', rh.x + rh.width / 2, rh.y + rh.height / 2);
+for (let i = 1; i <= 8; i++) {
+  await touch('touchMove', rh.x + rh.width / 2 + i * 8, rh.y + rh.height / 2 + i * 4);
+  await sleep(16);
+}
+await touch('touchEnd');
+await sleep(800);
+const rb1 = await card.boundingBox();
+check(rb1.width > rb0.width + 30, 'dragging it makes the card wider', JSON.stringify({ before: rb0.width, after: rb1.width }));
+const savedW = (await api('GET', `/api/boards/${boardId}`)).cards.find((c) => c.id === id).w;
+check(savedW > 200, 'the new width is saved', String(savedW));
+
+// The connect handle on the top-right corner: drag it onto another card to draw an arrow.
+const other = (await api('POST', `/api/boards/${boardId}/cards`, { cards: [{ type: 'note', x: 60, y: 420, data: { html: '<p>Target</p>' } }] })).cards[0];
+await page.reload();
+await page.waitForSelector(`[data-card-id="${other.id}"]`);
+await sleep(600);
+const pre2 = await card.boundingBox();
+await page.touchscreen.tap(pre2.x + pre2.width / 2, pre2.y + 40);
+await sleep(400);
+const cb = await card.boundingBox();
+const ah = await card.locator('[data-handle="arrow"]').boundingBox();
+check(ah && ah.width >= 36 && Math.abs(ah.x + ah.width / 2 - (cb.x + cb.width)) < 3 && Math.abs(ah.y + ah.height / 2 - cb.y) < 3, 'a large connect handle sits on the top-right corner', JSON.stringify({ ah, cb }));
+const tb = await page.locator(`[data-card-id="${other.id}"]`).boundingBox();
+const ax = ah.x + ah.width / 2;
+const ay = ah.y + ah.height / 2;
+const tx = tb.x + tb.width / 2;
+const ty = tb.y + tb.height / 2;
+await touch('touchStart', ax, ay);
+for (let i = 1; i <= 12; i++) {
+  await touch('touchMove', ax + ((tx - ax) * i) / 12, ay + ((ty - ay) * i) / 12);
+  await sleep(16);
+}
+await touch('touchEnd');
+await sleep(800);
+const arrows = (await api('GET', `/api/boards/${boardId}`)).arrows;
+check(arrows.length === 1 && arrows[0].from_card === id && arrows[0].to_card === other.id, 'dragging it onto another card draws an arrow between them', JSON.stringify(arrows.map((a) => [a.from_card, a.to_card])));
+
+// Inside a board the top bar has a back arrow to the board above (the installed app has no browser Back).
+const back = page.locator('.back-btn');
+check(await back.isVisible(), 'back arrow shows inside a board');
+await back.tap();
+await sleep(800);
+check((await page.evaluate(() => location.hash)) === '#/b/root' && (await back.count()) === 0, 'back arrow goes up to Home, where it disappears');
+await page.goto(`${BASE}/#/b/${boardId}`);
+await page.waitForSelector(`[data-card-id="${id}"] img`);
+await sleep(500);
+
+// Bottom bar on an iPhone 13 width: every button on screen, no sideways scrolling, extras under More.
+await page.locator('.canvas').tap({ position: { x: 300, y: 600 } });
+await sleep(500);
+const bar = await page.evaluate(() => {
+  const panel = document.querySelector('.tb-tools');
+  const shown = [...panel.querySelectorAll('button')].filter((b) => b.offsetParent);
+  return { overflow: panel.scrollWidth - panel.clientWidth, labels: shown.map((b) => b.getAttribute('aria-label')), out: shown.filter((b) => b.getBoundingClientRect().right > innerWidth + 0.5 || b.getBoundingClientRect().left < -0.5).length, minW: Math.min(...shown.map((b) => b.getBoundingClientRect().width)), widths: shown.map((b) => Math.round(b.getBoundingClientRect().width)) };
+});
+check(bar.overflow <= 0 && bar.out === 0, 'bottom bar fits the screen without scrolling', JSON.stringify(bar));
+check(bar.labels.join() === 'Note,Image,Board,Draw,Camera,Undo,More things to add' && bar.minW >= 44, 'phone bar: the main tools plus More, each at least 44 px wide', JSON.stringify(bar));
+await page.locator('[aria-label="More things to add"]').tap();
+await page.waitForSelector('.action-pop .pop-row');
+const extras = await page.locator('.action-pop .pop-row').allTextContents();
+check(extras.join() === 'To-do,Link,Color,Column', 'More lists To-do, Link, Color and Column', extras.join());
+await page.locator('.action-pop .pop-row', { hasText: 'To-do' }).tap();
+await sleep(800);
+check((await api('GET', `/api/boards/${boardId}`)).cards.some((c) => c.type === 'todo'), 'a to-do added from More lands on the board');
+await page.keyboard.press('Escape');
+await sleep(300);
+
+// The selected-card bar fits too, and the More menu shows no keyboard shortcuts on touch.
+const box2 = await card.boundingBox();
+await page.touchscreen.tap(box2.x + box2.width / 2, box2.y + 40);
+await sleep(500);
+const acts = await page.evaluate(() => {
+  const panel = document.querySelector('.tb-actions');
+  return { overflow: panel.scrollWidth - panel.clientWidth, n: panel.querySelectorAll('button').length };
+});
+check(acts.n >= 5 && acts.overflow <= 0, 'selected-card bar fits the screen', JSON.stringify(acts));
+await page.locator('[aria-label="More actions"]').tap();
+await page.waitForSelector('.action-pop .pop-row');
+check(!(await page.locator('.action-pop kbd').first().isVisible().catch(() => false)), 'no keyboard shortcut hints on a touch screen');
+await page.screenshot({ path: (process.env.SHOT_DIR || '.') + '/step18-phone.png' });
+
+// Saved items on a phone: a short strip above the bottom bar, swiped sideways; deleting can be undone.
+for (let i = 0; i < 4; i++) await api('POST', '/api/clips', { board_id: boardId, kind: 'text', text: `Saved note ${i + 1}` });
+await page.reload();
+await page.waitForSelector('.saved-panel');
+await sleep(600);
+const strip = await page.evaluate(() => {
+  const p = document.querySelector('.saved-panel').getBoundingClientRect();
+  const bar = document.querySelector('.toolbar').getBoundingClientRect();
+  const list = document.querySelector('.saved-list');
+  return { top: p.top, bottom: p.bottom, h: p.height, left: p.left, w: p.width, barTop: bar.top, vh: innerHeight, vw: innerWidth, sideways: list.scrollWidth > list.clientWidth };
+});
+check(Math.abs(strip.bottom - strip.barTop) < 2 && strip.left === 0 && strip.w === strip.vw, 'saved items sit as a full-width strip right above the bottom bar', JSON.stringify(strip));
+check(strip.h < strip.vh * 0.4, 'the strip takes less than 40% of the screen', JSON.stringify(strip));
+check(strip.sideways, 'more saved items than fit scroll sideways');
+const clipCount = async () => (await api('GET', '/api/clips')).clips.filter((c) => c.board_id === boardId).length;
+await page.locator('.saved-item [aria-label="Delete saved item"]').first().tap();
+await sleep(300);
+check((await page.locator('.saved-item').count()) === 3 && (await page.locator('.toast-action').textContent()) === 'Undo', 'delete hides the item and offers Undo');
+await page.locator('.toast-action').tap();
+await sleep(300);
+check((await page.locator('.saved-item').count()) === 4, 'Undo brings it back at once');
+await sleep(5500);
+check((await clipCount()) === 4, 'an undone delete never reaches the server');
+await page.locator('.saved-item [aria-label="Delete saved item"]').first().tap();
+await sleep(5800);
+check((await clipCount()) === 3, 'without Undo it is deleted after the message goes');
+await page.screenshot({ path: (process.env.SHOT_DIR || '.') + '/step18-saved.png' });
+
 check(!errors.length, 'no page errors', errors.join(' | '));
 await browser.close();
 

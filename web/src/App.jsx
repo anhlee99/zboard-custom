@@ -102,6 +102,21 @@ export default function App() {
     document.title = info.board && info.board.id !== 'root' ? `${info.board.title} · ZBoard` : 'ZBoard';
   }, [info.board]);
 
+  // Opened straight on a board (a reload, a link, Safari restoring the tab): the browser has nothing
+  // above it in its history, so Back would leave ZBoard or land on an old page. Fill in
+  // Home → … → this board once per page load, so Back walks up the tree.
+  const seeded = useRef(false);
+  useEffect(() => {
+    const bc = info.breadcrumbs;
+    if (seeded.current || !bc?.length) return;
+    seeded.current = true;
+    if (bc.length < 2 || history.state?.zbPath) return; // at Home, or this history was filled in before a reload
+    const here = location.hash;
+    history.replaceState({ zbPath: true }, '', `#/b/${bc[0].id}`);
+    for (const b of bc.slice(1, -1)) history.pushState({ zbPath: true }, '', `#/b/${b.id}`);
+    history.pushState({ zbPath: true }, '', here);
+  }, [info.breadcrumbs]);
+
   if (auth === 'checking') return <div className="splash">ZBoard</div>;
   if (auth === 'out') return <Login onDone={() => setAuth('in')} />;
 
@@ -121,6 +136,12 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
+        {/* Phones and the installed app have no browser Back button: this goes up one board. */}
+        {crumbs.length > 1 && (
+          <a className="icon-btn back-btn" href={`#/b/${crumbs[crumbs.length - 2].id}`} aria-label={`Back to ${crumbs[crumbs.length - 2].title || 'Untitled'}`}>
+            <Icon name="chevronLeft" size={22} />
+          </a>
+        )}
         <a className="logo" href="#/b/root" data-tip="Home" data-drop-board={route.board !== 'root' ? 'root' : undefined}>
           ZBoard
         </a>

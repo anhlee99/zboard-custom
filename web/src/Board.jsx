@@ -10,6 +10,7 @@ import ColorPicker from './ColorPicker.jsx';
 import DrawLayer from './Draw.jsx';
 import { inkBounds, mapStrokes } from './ink.js';
 import SavedPanel, { CLIP_DRAG_TYPE } from './SavedPanel.jsx';
+import { cachedBoard, fetchBoard, prefetchBoard, remember } from './boardCache.js';
 import { Icon } from './icons.jsx';
 import { COLORS, DEFAULT_W, byId, clamp, htmlText, isImageFile, isUrl, sortBetween, textToHtml, uid } from './util.js';
 
@@ -39,14 +40,15 @@ function loadView(id) {
   return null;
 }
 
+// extra: on a phone-width bar these sit under "More" so the rest fit without scrolling.
 const TOOLS = [
   { kind: 'note', label: 'Note', icon: 'note' },
-  { kind: 'todo', label: 'To-do', icon: 'todo' },
-  { kind: 'link', label: 'Link', icon: 'link' },
+  { kind: 'todo', label: 'To-do', icon: 'todo', extra: true },
+  { kind: 'link', label: 'Link', icon: 'link', extra: true },
   { kind: 'image', label: 'Image', icon: 'image' },
-  { kind: 'color', label: 'Color', icon: 'swatch' },
+  { kind: 'color', label: 'Color', icon: 'swatch', extra: true },
   { kind: 'board', label: 'Board', icon: 'board' },
-  { kind: 'column', label: 'Column', icon: 'column' },
+  { kind: 'column', label: 'Column', icon: 'column', extra: true },
 ];
 
 // Where the edge of a w×h box centred at (cx, cy) meets the line towards (tx, ty).
@@ -70,10 +72,14 @@ function edgePoint(r, tx, ty) {
 }
 
 export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved, onClipCount }) {
-  const [cards, setCards] = useState({});
-  const [arrows, setArrows] = useState({});
-  const [files, setFiles] = useState({});
-  const [loaded, setLoaded] = useState(false);
+  // A board fetched ahead or seen before draws at once; load() below refreshes it from the server.
+  const [cached] = useState(() => cachedBoard(boardId));
+  const [cards, setCards] = useState(() => byId(cached?.cards));
+  const [arrows, setArrows] = useState(() => byId(cached?.arrows));
+  const [files, setFiles] = useState(() => cached?.files || {});
+  const [loaded, setLoaded] = useState(!!cached);
+  const [panelHold, setPanelHold] = useState(false); // see the touch tap handler
+  const panelHoldTimer = useRef(0);
   const [view, setView] = useState(() => loadView(boardId) || { x: 80, y: 40, s: 1 });
   const [sel, setSel] = useState(EMPTY);
   const [selArrow, setSelArrow] = useState(null);
@@ -114,6 +120,21 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
 
   const S = useRef({});
   S.current = { cards, arrows, files, view, sel, selArrow, editing, drawing };
+
+  // Top bar: the cached board's name and path at once. On leaving, remember the board as it is
+  // now, so coming back never flashes an older copy.
+  const info = useRef(cached && { board: cached.board, breadcrumbs: cached.breadcrumbs });
+  useLayoutEffect(() => {
+    if (info.current) onInfo(info.current);
+    return () => {
+      if (info.current) remember(boardId, { ...info.current, cards: Object.values(S.current.cards), arrows: Object.values(S.current.arrows), files: S.current.files });
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // A selected board card is probably about to be opened (the first tap of a double tap).
+  useEffect(() => {
+    const c = sel.size === 1 ? cards[[...sel][0]] : null;
+    if (c?.type === 'board' && c.data.boardId) prefetchBoard(c.data.boardId);
+  }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
   const canvasRef = useRef(null);
   const worldRef = useRef(null);
   const fileInput = useRef(null);
@@ -128,10 +149,11 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   const toastTimer = useRef(null);
   const pendingFocus = useRef(focus);
 
-  const notify = useCallback((msg) => {
-    setToast(String(msg?.message || msg));
+  // action: optional { label, run } shown as a button in the message (e.g. Undo).
+  const notify = useCallback((msg, action = null) => {
+    setToast({ text: String(msg?.message || msg), action });
     clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 4000);
+    toastTimer.current = setTimeout(() => setToast(null), action ? 5000 : 4000);
   }, []);
 
   // ---------- loading + live sync ----------
@@ -160,11 +182,12 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
 
   const load = useCallback(async () => {
     try {
-      const d = await api('GET', `/api/boards/${encodeURIComponent(boardId)}?files=1`);
+      const d = await fetchBoard(boardId);
       setCards(byId(d.cards));
       setArrows(byId(d.arrows));
       setFiles((f) => ({ ...f, ...d.files }));
-      onInfo({ board: d.board, breadcrumbs: d.breadcrumbs });
+      info.current = { board: d.board, breadcrumbs: d.breadcrumbs };
+      onInfo(info.current);
       setLoaded(true);
     } catch (e) {
       if (e.status === 404) {
@@ -595,12 +618,22 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     },
     [boardId, applyCards, pushUndo, deleteCards, notify, loadClips]
   );
+  // Deleting a saved item can be undone: it leaves the list at once but is only deleted on the
+  // server after the Undo message has gone (closing the page before then keeps it).
   const deleteClip = useCallback(
-    async (id) => {
+    (id) => {
+      const clip = clips.find((c) => c.id === id);
       setClips((prev) => prev.filter((c) => c.id !== id));
-      await api('DELETE', `/api/clips/${id}`).catch(notify);
+      const timer = setTimeout(() => api('DELETE', `/api/clips/${id}`).catch(notify), 5000);
+      notify('Saved item deleted', {
+        label: 'Undo',
+        run: () => {
+          clearTimeout(timer);
+          if (clip) setClips((prev) => [clip, ...prev.filter((c) => c.id !== id)].sort((a, b) => b.created_at - a.created_at));
+        },
+      });
     },
-    [notify]
+    [clips, notify]
   );
 
   // ---------- adding content ----------
@@ -854,10 +887,14 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   const openCard = useCallback((c) => {
     if (!c) return;
     if (c.type === 'drawing') return openDrawing(c);
-    if (c.type === 'board' && c.data.boardId) location.hash = `#/b/${c.data.boardId}`;
-    else if (c.type === 'link' && c.data.url) window.open(c.data.url, '_blank', 'noopener');
+    if (c.type === 'board' && c.data.boardId) {
+      // The top bar names the new board right away (from its card), not when its contents arrive.
+      const board = { id: c.data.boardId, title: c.child?.title || 'Untitled' };
+      if (info.current) onInfo({ board, breadcrumbs: [...info.current.breadcrumbs, board] });
+      location.hash = `#/b/${c.data.boardId}`;
+    } else if (c.type === 'link' && c.data.url) window.open(c.data.url, '_blank', 'noopener');
     else if (c.type === 'image' && c.data.fileId) setLightbox(c.data.fileId);
-  }, [openDrawing]);
+  }, [openDrawing, onInfo]);
 
   const startEdit = useCallback((id) => {
     setSel(new Set([id]));
@@ -1562,6 +1599,11 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
           else if (c) startEdit(c.id);
         } else {
           lastTap.current = { id: g.card, t: now };
+          // Hold the action bar back for the double-tap window: a second tap that opens the card
+          // then doesn't flip the bottom bar to the card's actions and straight back again.
+          setPanelHold(true);
+          clearTimeout(panelHoldTimer.current);
+          panelHoldTimer.current = setTimeout(() => setPanelHold(false), 350);
           setSel(new Set([g.card]));
           setSelArrow(null);
           if (S.current.editing && S.current.editing !== g.card) document.activeElement?.blur?.();
@@ -1986,7 +2028,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
   };
 
   // ---------- action panel (left toolbar flips to the selection's actions) ----------
-  const actionsOn = !drawing && (sel.size > 0 || !!arrowBar);
+  const actionsOn = !drawing && !panelHold && (sel.size > 0 || !!arrowBar);
   const openPop = (kind) => (e) => {
     const r = e.currentTarget.getBoundingClientRect();
     const w = wrapRef.current.getBoundingClientRect();
@@ -2067,6 +2109,17 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
           {label}
           {extra.keys && <kbd>{extra.keys}</kbd>}
         </button>
+      );
+    if (pop.kind === 'addMore')
+      return (
+        <div className="pop-menu">
+          {TOOLS.filter((t) => t.extra).map((t) =>
+            row(t.label, t.icon, () => {
+              const c = centerWorld();
+              addTool(t.kind, { x: Math.round(c.x - DEFAULT_W[t.kind] / 2), y: Math.round(c.y - 60) });
+            })
+          )}
+        </div>
       );
     if (pop.kind === 'color')
       return (
@@ -2160,7 +2213,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       <aside className={actionsOn ? 'toolbar show-actions' : 'toolbar'}>
         <div className="tb-panel tb-tools" aria-hidden={actionsOn || undefined}>
           {TOOLS.map((t) => (
-            <button key={t.kind} className="tool" onPointerDown={(e) => onToolDown(t.kind, e)} data-tip={`${t.label} — click or drag`} aria-label={t.label} tabIndex={actionsOn ? -1 : undefined}>
+            <button key={t.kind} className={t.extra ? 'tool tool-extra' : 'tool'} onPointerDown={(e) => onToolDown(t.kind, e)} data-tip={`${t.label} — click or drag`} aria-label={t.label} tabIndex={actionsOn ? -1 : undefined}>
               <Icon name={t.icon} size={22} />
               <span>{t.label}</span>
             </button>
@@ -2177,6 +2230,10 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
           <button className="tool" onClick={undo} data-tip="Undo (Ctrl+Z)" aria-label="Undo" tabIndex={actionsOn ? -1 : undefined}>
             <Icon name="undo" size={22} />
             <span>Undo</span>
+          </button>
+          <button className={'tool tool-more' + (pop?.kind === 'addMore' ? ' open' : '')} onClick={openPop('addMore')} aria-label="More things to add" tabIndex={actionsOn ? -1 : undefined}>
+            <Icon name="dots" size={22} />
+            <span>More</span>
           </button>
         </div>
         <div className="tb-panel tb-actions item-actions" aria-label="Selected item actions">
@@ -2314,7 +2371,22 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         </div>
       )}
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className="toast" role="status">
+          {toast.text}
+          {toast.action && (
+            <button
+              className="toast-action"
+              onClick={() => {
+                toast.action.run();
+                setToast(null);
+              }}
+            >
+              {toast.action.label}
+            </button>
+          )}
+        </div>
+      )}
 
       <input
         ref={cameraInput}

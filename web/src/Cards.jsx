@@ -536,8 +536,20 @@ export const CardView = memo(function CardView(props) {
               <Icon name="move" size={18} />
             </div>
           )}
-          <div className="handle handle-resize" data-handle="resize" data-tip="Resize" />
-          <div className="handle handle-arrow" data-handle="arrow" data-tip="Drag to a card to connect" />
+          {TOUCH ? (
+            <div className="handle handle-move handle-resize-touch" data-handle="resize" aria-label="Resize" style={{ '--hs': 1 / (props.settledS || 1) }}>
+              <Icon name="resize" size={18} />
+            </div>
+          ) : (
+            <div className="handle handle-resize" data-handle="resize" data-tip="Resize" />
+          )}
+          {TOUCH ? (
+            <div className="handle handle-move handle-arrow-touch" data-handle="arrow" aria-label="Connect with an arrow" style={{ '--hs': 1 / (props.settledS || 1) }}>
+              <Icon name="arrowEnd" size={18} />
+            </div>
+          ) : (
+            <div className="handle handle-arrow" data-handle="arrow" data-tip="Drag to a card to connect" />
+          )}
         </>
       )}
     </div>
