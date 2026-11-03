@@ -31,6 +31,11 @@ body,
   height: 100%;
   margin: 0;
 }
+/* No page zoom (pinch or double tap) anywhere: the board zooms itself; panels still scroll. */
+html,
+body {
+  touch-action: pan-x pan-y;
+}
 body {
   font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   color: var(--ink);
@@ -113,6 +118,14 @@ input {
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   z-index: 20;
+}
+.back-btn {
+  display: none;
+}
+@media (display-mode: standalone) {
+  .back-btn {
+    display: flex;
+  }
 }
 .logo {
   font-weight: 800;
@@ -332,6 +345,47 @@ input {
   background: var(--panel);
   border: 2px solid var(--accent);
   cursor: nwse-resize;
+}
+/* Touch screens: a grab handle centred on the card's top-left corner (the browser's long-press menu gets in the way otherwise). */
+.handle-move {
+  display: flex;
+  left: calc(-20px * var(--hs, 1)); /* centred on the corner */
+  top: calc(-20px * var(--hs, 1));
+  width: 40px;
+  height: 40px;
+  transform: scale(var(--hs, 1));
+  transform-origin: 0 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: var(--shadow);
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+/* Its twin for resizing sits on the bottom-right corner. */
+.handle-resize-touch {
+  left: calc(100% - 20px * var(--hs, 1));
+  top: calc(100% - 20px * var(--hs, 1));
+}
+/* …and the one for drawing an arrow to another card on the top-right corner. */
+.handle-arrow-touch {
+  left: calc(100% - 20px * var(--hs, 1));
+}
+/* No "Save image / Copy / Open" menu when holding a card on iOS and Android. */
+.canvas img,
+.canvas .card {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.canvas .card.editing,
+.canvas .card.editing *,
+.canvas .card input,
+.canvas .card textarea,
+.canvas .card [contenteditable='true'] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 .handle-arrow {
   right: -22px;
@@ -799,6 +853,22 @@ input {
   box-shadow: var(--shadow-lift);
   z-index: 300;
   max-width: calc(100vw - 32px);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.toast-action {
+  border: 0;
+  background: transparent;
+  color: #8fb6ff;
+  font: inherit;
+  font-weight: 650;
+  padding: 2px 0;
+}
+@media (max-width: 700px) {
+  .toast {
+    bottom: calc(76px + env(safe-area-inset-bottom)); /* above the bottom bar */
+  }
 }
 
 /* ---------- context menu ---------- */
@@ -960,8 +1030,15 @@ input {
   touch-action: pan-y;
 }
 
-.tool-camera {
+.tool-camera,
+.tool-more {
   display: none;
+}
+/* Keyboard shortcuts mean nothing on a touch screen. */
+@media (pointer: coarse) {
+  .pop-row kbd {
+    display: none;
+  }
 }
 @media (pointer: coarse) {
   .tool-camera {
@@ -995,26 +1072,46 @@ input {
   .toolbar::-webkit-scrollbar {
     display: none;
   }
+  /* Every button gets an equal share of the width: nothing hides off-screen, nothing scrolls. */
   .tool {
-    width: 52px;
-    flex: none;
-    touch-action: pan-x;
+    width: auto;
+    min-width: 0;
+    flex: 1 1 0;
+    max-width: 72px;
+    touch-action: none;
     font-size: 10px;
+  }
+  .tool span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tool-extra {
+    display: none;
+  }
+  .tool-more {
+    display: flex;
   }
   .tool-camera {
     display: flex;
   }
   .tool-sep {
-    width: 1px;
-    height: 32px;
-    margin: 0 4px;
-    flex: none;
+    display: none;
   }
   .crumb {
     max-width: 120px;
   }
   .logo {
     padding: 4px;
+  }
+  /* Inside a board the back arrow takes the logo's place. */
+  .back-btn {
+    display: flex;
+    margin-left: -6px;
+  }
+  .back-btn + .logo {
+    display: none;
   }
   .zoom-ctl {
     bottom: 8px;
@@ -1397,6 +1494,59 @@ kbd {
   left: auto;
   right: 0;
   transform: none;
+}
+/* Phones: a short strip above the bottom bar, swiped sideways, instead of a panel over most of the board. */
+@media (max-width: 700px) {
+  .saved-panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: calc(61.5px + env(safe-area-inset-bottom)); /* the bottom bar's height */
+    width: auto;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 14px 14px 0 0;
+  }
+  .saved-head {
+    flex-wrap: nowrap;
+    padding: 6px 6px 6px 14px;
+  }
+  .saved-heading {
+    font-size: 14px;
+  }
+  .saved-list {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px 10px 10px;
+    scroll-snap-type: x proximity;
+    touch-action: pan-x;
+  }
+  .saved-item {
+    flex: none;
+    width: 132px;
+    scroll-snap-align: start;
+  }
+  .saved-thumb {
+    height: 92px;
+    max-height: none;
+  }
+  .saved-text {
+    height: 92px;
+    font-size: 12px;
+    -webkit-line-clamp: 5;
+  }
+  .saved-link .saved-title {
+    font-size: 12px;
+    -webkit-line-clamp: 1;
+  }
+  .saved-link .saved-thumb {
+    height: 60px;
+  }
+  .saved-empty {
+    flex: 1;
+    padding: 12px;
+  }
 }
 
 .copy-field {
@@ -2340,9 +2490,11 @@ kbd {
 @media (max-width: 700px) {
   .toolbar {
     overflow: hidden;
+    grid-template-columns: minmax(0, 1fr); /* the panels span the whole bar, so their buttons can share it */
   }
   .tb-panel {
     flex-direction: row;
+    justify-content: center;
     width: 100%;
     overflow-x: auto;
     scrollbar-width: none;
