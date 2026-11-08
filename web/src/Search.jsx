@@ -80,12 +80,15 @@ export default function Search({ initial, onClose }) {
   }
 
   return (
-    <div className="overlay" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="overlay search-overlay" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="search-panel" role="dialog" aria-label="Search">
         <div className="search-input-row">
           <Icon name="search" size={18} />
           <input autoFocus placeholder="Search cards and boards, or #tag" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} aria-label="Search" />
           <kbd>Esc</kbd>
+          <button className="search-cancel" onClick={onClose}>
+            Cancel
+          </button>
         </div>
         {q.trim() ? (
           <ul className="search-results scrolls" ref={listRef}>
