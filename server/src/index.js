@@ -12,6 +12,7 @@ import { ZipArchive } from 'archiver';
 import { createStore, HttpError, isId, newId } from './db.js';
 import { drawingSvg } from './ink.js';
 import { importMilanote } from './milanote.js';
+import { createCleanup } from './cleanup.js';
 import { createDrive, createLocalBackups } from './backup.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -20,6 +21,10 @@ const DATA_DIR = path.resolve(ROOT, process.env.DATA_DIR || 'data');
 const BACKUP_DIR = path.resolve(ROOT, process.env.BACKUP_DIR || 'backup');
 const BACKUP_CRON = (process.env.BACKUP_CRON ?? '0 3 * * *').trim();
 const BACKUP_KEEP = Number(process.env.BACKUP_KEEP) || 14;
+// Unused pictures are removed by a check on this schedule (default: the 1st of each month, 04:00), once
+// unused for CLEANUP_AFTER_DAYS and older than every kept backup. "off" disables it.
+const CLEANUP_CRON = (process.env.CLEANUP_CRON ?? '0 4 1 * *').trim();
+const CLEANUP_AFTER_DAYS = process.env.CLEANUP_AFTER_DAYS !== undefined && process.env.CLEANUP_AFTER_DAYS !== '' ? Math.max(0, Number(process.env.CLEANUP_AFTER_DAYS)) : 30;
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 50;
 const APP_PASSWORD = process.env.APP_PASSWORD;
 
@@ -712,6 +717,39 @@ app.post('/api/drive/connect', async (req, res) => res.json({ pending: await dri
 app.post('/api/drive/disconnect', async (req, res) => res.json(await drive.disconnect()));
 app.post('/api/drive/sync', async (req, res) => res.json(await drive.sync('manual')));
 app.post('/api/drive/restore', async (req, res) => res.json(await drive.restore()));
+
+// ---- unused files (see cleanup.js) ----
+const cleanup = createCleanup({
+  getStore: () => store,
+  afterDays: CLEANUP_AFTER_DAYS,
+  localSnapshots: () => local.list(),
+  localDir: path.join(BACKUP_DIR, 'db'),
+  tmpDir: DIRS.tmp,
+  drive,
+  // Every copy of a file: the original (and its JPEG for HEIC), its previews, and the local backup copy.
+  pathsOf: (f) => [
+    ...new Set([f.ext, f.display_ext].filter(Boolean).flatMap((ext) => [path.join(DIRS.files, f.id + ext), path.join(BACKUP_DIR, 'files', f.id + ext)])),
+    thumbPath(f.id),
+    miniPath(f.id),
+    microPath(f.id),
+  ],
+  log,
+});
+app.get('/api/cleanup', (req, res) => res.json({ ...cleanup.status(), cron: CLEANUP_CRON }));
+app.post('/api/cleanup', async (req, res) => res.json({ ...(await cleanup.run('manual')), cron: CLEANUP_CRON }));
+// "Clean up now": what is safe to remove right away (checks every kept backup), then remove what was confirmed.
+app.post('/api/cleanup/check', async (req, res) => res.json(await cleanup.check()));
+app.post('/api/cleanup/remove', async (req, res) => res.json({ ...(await cleanup.removeNow(req.body?.ids)), cron: CLEANUP_CRON }));
+
+if (CLEANUP_CRON !== 'off') {
+  if (!cron.validate(CLEANUP_CRON)) {
+    console.error(`CLEANUP_CRON "${CLEANUP_CRON}" is not a valid cron expression (use "off" to disable).`);
+    process.exit(1);
+  }
+  cron.schedule(CLEANUP_CRON, () => cleanup.run('scheduled').catch(() => {}));
+  // Catch up a monthly run missed while ZBoard was off (a minute after start, out of the way).
+  if (cleanup.due(31)) setTimeout(() => cleanup.run('catch-up').catch(() => {}), 60_000).unref();
+}
 
 if (BACKUP_CRON && BACKUP_CRON !== 'off') {
   if (!cron.validate(BACKUP_CRON)) {

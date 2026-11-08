@@ -84,6 +84,8 @@ from sleeping while plugged in: `powercfg /change standby-timeout-ac 0`. (On nat
 | `BACKUP_DIR` | `./backup` | Where nightly backups go. Put it on a second disk. |
 | `BACKUP_CRON` | `0 3 * * *` | When the nightly backup runs (cron syntax). `off` disables it. |
 | `BACKUP_KEEP` | `14` | Local snapshots to keep. |
+| `CLEANUP_CRON` | `0 4 1 * *` | When unused pictures are checked (1st of each month, 04:00). A run missed while ZBoard was off happens at the next start. `off` disables it. |
+| `CLEANUP_AFTER_DAYS` | `30` | A picture no card or saved item uses is removed (original, previews, local backup copy, Drive copy) once unused this long **and** older than every kept backup. |
 | `MAX_UPLOAD_MB` | `50` | Largest upload. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | – | Google Drive backup, see below. |
 | `GOOGLE_BACKUP_PASSPHRASE` | – | Optional: encrypt everything before it goes to Drive. Needed to restore. |
@@ -201,6 +203,10 @@ What happens then:
 
   Thumbnails are rebuilt on start-up.
 - **Restore from Google Drive**: see above.
+- **Unused pictures**: deleting a card keeps its picture (undo and older backups may need it). A monthly
+  check (`CLEANUP_CRON`) removes a picture everywhere (original, previews, local backup, Google Drive) once
+  nothing has used it for `CLEANUP_AFTER_DAYS` and every kept backup is newer than that, so a backup you can
+  still restore never misses a picture. **Menu → Unused files** shows what is waiting and runs the check now.
 - **Export**: Menu → Export gives a zip of a board (or everything) with a `board.json` and the original files.
 
 ## Docker

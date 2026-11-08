@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 
 export function formatBytes(n) {
@@ -127,6 +127,189 @@ function DriveSection() {
 }
 
 // Copy that also works on plain-http LAN addresses, where navigator.clipboard is missing.
+// Pictures no card uses any more: how many wait, and when they go (see server/src/cleanup.js).
+function CleanupSection() {
+  const [s, setS] = useState(null);
+  const [busy, setBusy] = useState(null); // 'check' | 'find' | null
+  const [error, setError] = useState(null);
+  const [found, setFound] = useState(null); // what "Clean up now" may remove, shown in the confirm window
+  const [done, setDone] = useState(null);
+  const refresh = useCallback(() => api('GET', '/api/cleanup').then(setS).catch((e) => setError(e.message)), []);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  async function runNow() {
+    setBusy('check');
+    setError(null);
+    setDone(null);
+    try {
+      setS(await api('POST', '/api/cleanup'));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Reads every kept backup first (Drive ones are downloaded), then asks before removing anything.
+  async function cleanUpNow() {
+    setBusy('find');
+    setError(null);
+    setDone(null);
+    try {
+      setFound(await api('POST', '/api/cleanup/check'));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const schedule = (cron) => (cron === 'off' ? 'off' : cron === '0 4 1 * *' ? 'monthly (1st, 04:00)' : cron);
+  return (
+    <section className="menu-section">
+      <h4>Unused files</h4>
+      {s ? (
+        <>
+          <dl className="kv">
+            <dt>Waiting</dt>
+            <dd>{s.unused.count ? `${s.unused.count} (${formatBytes(s.unused.bytes)})` : 'none'}</dd>
+            <dt>Removed after</dt>
+            <dd>{s.after_days} days unused</dd>
+            <dt>Check</dt>
+            <dd>{schedule(s.cron)}</dd>
+            <dt>Last check</dt>
+            <dd className={s.last_error ? 'error-text' : ''}>
+              {s.last_run ? `${when(s.last_run)} · removed ${s.last_removed}${s.last_freed ? ` (${formatBytes(s.last_freed)})` : ''}` : 'never'}
+              {s.last_error ? ` · ${s.last_error}` : ''}
+            </dd>
+          </dl>
+          <div className="muted cleanup-note">
+            Pictures no card uses any more. Each is removed everywhere (here, local backup, Google Drive) once unused for {s.after_days} days and older
+            than every backup still kept, so restoring a backup never misses a picture.
+          </div>
+          <div className="menu-buttons">
+            <button onClick={runNow} disabled={!!busy || s.running}>
+              {busy === 'check' ? 'Checking…' : 'Check now'}
+            </button>
+            <button className="danger-button" onClick={cleanUpNow} disabled={!!busy || s.running || !s.unused.count}>
+              {busy === 'find' ? 'Checking backups…' : 'Clean up now…'}
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="muted">Loading…</div>
+      )}
+      {done && <div className="ok-text">{done}</div>}
+      {error && <div className="error-text">{error}</div>}
+      {found && (
+        <CleanupConfirm
+          found={found}
+          onClose={() => setFound(null)}
+          onRemoved={(r) => {
+            setFound(null);
+            setS(r);
+            setDone(`Removed ${r.removed} picture${r.removed === 1 ? '' : 's'} and freed ${formatBytes(r.freed)}.`);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+// The confirm window for "Clean up now": what goes, from where, and that it can't be brought back.
+function CleanupConfirm({ found, onClose, onRemoved }) {
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState(null);
+  const cancelRef = useRef(null);
+  useEffect(() => {
+    cancelRef.current?.focus();
+    const onKey = (e) => e.key === 'Escape' && !removing && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, removing]);
+
+  async function remove() {
+    setRemoving(true);
+    setError(null);
+    try {
+      onRemoved(await api('POST', '/api/cleanup/remove', { ids: found.files.map((f) => f.id) }));
+    } catch (e) {
+      setError(e.message);
+      setRemoving(false);
+    }
+  }
+
+  const n = found.count;
+  const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  const backups = [plural(found.checked.local, 'local backup', 'local backups'), found.drive && plural(found.checked.drive, 'Google Drive backup', 'Google Drive backups')].filter(Boolean).join(' and ');
+  const shown = found.files.slice(0, 18);
+  return (
+    <div className="overlay confirm-overlay" onPointerDown={(e) => e.target === e.currentTarget && !removing && onClose()}>
+      <div className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="cleanup-title" aria-describedby="cleanup-loss">
+        {n ? (
+          <>
+            <h3 id="cleanup-title">Permanently remove {plural(n, 'unused picture', 'unused pictures')}?</h3>
+            <p className="confirm-lead">
+              <strong>{formatBytes(found.bytes)}</strong> · no board, card or saved item uses {n === 1 ? 'it' : 'them'},{' '}
+              {found.checked.local + found.checked.drive ? `and none of your ${backups} contains ${n === 1 ? 'it' : 'them'}.` : 'and there is no backup that could need them.'}
+            </p>
+            <div className="confirm-thumbs" aria-label="Pictures that will be removed">
+              {shown.map((f) => (
+                <img key={f.id} src={`/files/${f.id}/thumb`} alt={f.name || ''} title={`${f.name || f.id} · ${formatBytes(f.size)}`} loading="lazy" />
+              ))}
+              {n > shown.length && <div className="confirm-more">+{n - shown.length} more</div>}
+            </div>
+            <div className="confirm-where">
+              <div>Deleted from:</div>
+              <ul>
+                <li>this computer: the original files and their previews</li>
+                <li>the local backup folder</li>
+                {found.drive && <li>Google Drive: the encrypted copies in “ZBoard Backup”</li>}
+              </ul>
+            </div>
+            <div className="confirm-loss" id="cleanup-loss">
+              <strong>This can’t be undone.</strong> Once removed, {n === 1 ? 'this picture' : 'these pictures'} can’t be brought back: not with Undo, not from a local
+              backup{found.drive ? ', not with a Google Drive restore' : ''}. Your boards stay exactly as they are, because none of them uses{' '}
+              {n === 1 ? 'it' : 'these pictures'}.
+            </div>
+            {found.kept_by_backup > 0 && (
+              <p className="muted">
+                {plural(found.kept_by_backup, 'other unused picture is', 'other unused pictures are')} still inside a kept backup, so{' '}
+                {found.kept_by_backup === 1 ? 'it stays' : 'they stay'} until that backup is replaced.
+              </p>
+            )}
+            {error && <div className="error-text">{error}</div>}
+            <div className="confirm-buttons">
+              <button ref={cancelRef} onClick={onClose} disabled={removing}>
+                Cancel
+              </button>
+              <button className="danger-solid" onClick={remove} disabled={removing}>
+                {removing ? 'Removing…' : `Remove ${plural(n, 'picture', 'pictures')}`}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h3 id="cleanup-title">Nothing to remove right now</h3>
+            <p id="cleanup-loss">
+              {found.kept_by_backup
+                ? `${plural(found.kept_by_backup, 'unused picture is', 'unused pictures are')} still inside a kept backup (${backups}), so ${found.kept_by_backup === 1 ? 'it stays' : 'they stay'} until that backup is replaced. The monthly check removes ${found.kept_by_backup === 1 ? 'it' : 'them'} after that.`
+                : 'Every picture is in use.'}
+            </p>
+            <div className="confirm-buttons">
+              <button ref={cancelRef} onClick={onClose}>
+                Close
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function copyText(text) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
   const t = document.createElement('textarea');
@@ -275,6 +458,8 @@ export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
         </section>
 
         <DriveSection />
+
+        <CleanupSection />
 
         <ExtensionSection />
 
