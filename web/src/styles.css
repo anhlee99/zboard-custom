@@ -1319,6 +1319,36 @@ kbd {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 11px;
 }
+/* Google Drive backup progress */
+.drive-progress {
+  margin: 4px 0 10px;
+  font-size: 12px;
+}
+.progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.progress-fill.indeterminate {
+  width: 30%;
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
 .menu-buttons {
   display: flex;
   flex-wrap: wrap;

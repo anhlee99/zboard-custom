@@ -100,6 +100,8 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
   let timer = null;
   let running = null;
   let dirty = false;
+  // While a backup runs: { phase: 'files' | 'snapshot', done, total, bytes, total_bytes } for the progress bar.
+  let progress = null;
 
   function status() {
     const s = state();
@@ -115,6 +117,7 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
       snapshots: s.snapshots ?? 0,
       last_error: s.last_error ?? null,
       running: Boolean(running),
+      progress: running ? progress : null,
       dirty,
     };
   }
@@ -290,12 +293,17 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
           saveState({ reconciled: true });
         }
         let copied = 0;
-        for (const file of getStore().filesNotOnDrive()) {
-          const p = path.join(dataDir, 'files', file.id + file.ext);
-          if (!fs.existsSync(p)) continue;
+        const todo = getStore()
+          .filesNotOnDrive()
+          .map((file) => ({ file, p: path.join(dataDir, 'files', file.id + file.ext) }))
+          .filter(({ p }) => fs.existsSync(p));
+        progress = { phase: 'files', done: 0, total: todo.length, bytes: 0, total_bytes: todo.reduce((n, { file }) => n + (file.size || 0), 0) };
+        for (const { file, p } of todo) {
           getStore().markOnDrive(file.id, await upload(file.id + file.ext + suffix, f.files, encrypt(await fs.promises.readFile(p))));
           copied++;
+          progress = { ...progress, done: copied, bytes: progress.bytes + (file.size || 0) };
         }
+        progress = { ...progress, phase: 'snapshot' };
         const tmp = path.join(dataDir, 'tmp', `drive-${Date.now()}.db`);
         snapshotTo(getStore(), tmp);
         const name = `zboard-${stamp()}.db${suffix}`;
@@ -316,6 +324,7 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
         throw e;
       } finally {
         running = null;
+        progress = null;
         if (dirty) schedule(debounceMs);
       }
     })();

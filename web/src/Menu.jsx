@@ -9,6 +9,27 @@ export function formatBytes(n) {
 }
 const when = (t) => (t ? new Date(t).toLocaleString() : 'never');
 
+// Pictures go up one by one, then the database snapshot. Measured in bytes, so big files count for more.
+function DriveProgress({ p }) {
+  let label = 'Getting ready…';
+  let frac = 0;
+  if (p?.phase === 'files' && p.total) {
+    frac = p.total_bytes ? p.bytes / p.total_bytes : p.done / p.total;
+    label = `Uploading pictures ${p.done} of ${p.total} · ${formatBytes(p.bytes)} of ${formatBytes(p.total_bytes)}`;
+  } else if (p?.phase === 'snapshot') {
+    frac = 1;
+    label = p.total ? `Pictures done (${p.total}) · uploading the database snapshot…` : 'Uploading the database snapshot…';
+  }
+  return (
+    <div className="drive-progress">
+      <div className="progress" role="progressbar" aria-label="Backup progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(frac * 100)}>
+        <div className={p ? 'progress-fill' : 'progress-fill indeterminate'} style={p ? { width: `${Math.max(2, frac * 100)}%` } : undefined} />
+      </div>
+      <div className="muted">{label}</div>
+    </div>
+  );
+}
+
 function DriveSection() {
   const [s, setS] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -18,13 +39,14 @@ function DriveSection() {
   useEffect(() => {
     refresh();
   }, [refresh]);
-  // Poll while signing in or uploading.
+  // Poll while signing in or uploading (every second while uploading, for the progress bar).
   useEffect(() => {
-    const active = (s?.pending && !s.pending.error) || s?.running;
+    const uploading = s?.running || busy === 'sync';
+    const active = (s?.pending && !s.pending.error) || uploading;
     if (!active) return;
-    const t = setInterval(refresh, 2500);
+    const t = setInterval(refresh, uploading ? 1000 : 2500);
     return () => clearInterval(t);
-  }, [s, refresh]);
+  }, [s, busy, refresh]);
 
   async function act(name, fn) {
     setBusy(name);
@@ -73,6 +95,7 @@ function DriveSection() {
               </>
             )}
           </dl>
+          {s.running && <DriveProgress p={s.progress} />}
           <div className="menu-buttons">
             <button disabled={!!busy || s.running} onClick={() => act('sync', () => api('POST', '/api/drive/sync'))}>
               {busy === 'sync' || s.running ? 'Backing up…' : 'Back up now'}
