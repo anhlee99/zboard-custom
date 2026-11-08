@@ -1,4 +1,4 @@
-// Menu → Unused files → "Clean up now…": the confirm window says what goes and that it can't be undone;
+// Menu → Backup & Restore → Unused pictures → "Clean up now…": the confirm window says what goes and that it can't be undone;
 // Cancel and Escape keep everything; Remove deletes. Needs a server on ZB_URL from an empty data dir
 // (no Google Drive set up).
 import { api, BASE, check, done, launch, login, sleep, solidPng } from './lib.mjs';
@@ -17,7 +17,7 @@ const { page } = await login(browser, { width: 1200, height: 900 });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.click('[aria-label="Menu"]');
-const section = page.locator('.menu-section', { hasText: 'Unused files' });
+const section = page.locator('.menu-sub', { hasText: 'Unused pictures' });
 await section.locator('button', { hasText: 'Check now' }).click();
 await sleep(500);
 check(/5 \(/.test(await section.locator('.kv').innerText()), 'Check now counts the 5 unused pictures');

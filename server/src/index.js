@@ -13,14 +13,15 @@ import { createStore, HttpError, isId, newId } from './db.js';
 import { drawingSvg } from './ink.js';
 import { importMilanote } from './milanote.js';
 import { createCleanup } from './cleanup.js';
+import { createBackupPlan } from './plan.js';
 import { createDrive, createLocalBackups } from './backup.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(ROOT, process.env.DATA_DIR || 'data');
 const BACKUP_DIR = path.resolve(ROOT, process.env.BACKUP_DIR || 'backup');
-const BACKUP_CRON = (process.env.BACKUP_CRON ?? '0 3 * * *').trim();
 const BACKUP_KEEP = Number(process.env.BACKUP_KEEP) || 14;
+const DRIVE_KEEP = 30; // Google Drive snapshots kept
 // Unused pictures are removed by a check on this schedule (default: the 1st of each month, 04:00), once
 // unused for CLEANUP_AFTER_DAYS and older than every kept backup. "off" disables it.
 const CLEANUP_CRON = (process.env.CLEANUP_CRON ?? '0 4 1 * *').trim();
@@ -652,11 +653,6 @@ app.get('/api/stats', (req, res) => {
 const log = (msg) => console.log(`[${new Date().toISOString()}] ${msg}`);
 const local = createLocalBackups({ getStore: () => store, dataDir: DATA_DIR, backupDir: BACKUP_DIR, keep: BACKUP_KEEP, log });
 
-app.get('/api/backup', (req, res) =>
-  res.json({ status: local.status(), dir: BACKUP_DIR, cron: BACKUP_CRON, keep: BACKUP_KEEP, snapshots: local.list().slice(0, BACKUP_KEEP) })
-);
-app.post('/api/backup', async (req, res) => res.json({ status: await local.run() }));
-
 const slug = (s) =>
   String(s || '')
     .normalize('NFKD')
@@ -709,6 +705,7 @@ const drive = createDrive({
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
   passphrase: process.env.GOOGLE_BACKUP_PASSPHRASE || '',
   debounceMs: Number(process.env.DRIVE_DEBOUNCE_MS) || 90_000,
+  keep: DRIVE_KEEP,
   log,
   onRestore: replaceDatabase,
   paused: () => cleanupBusy(), // Drive waits while unused pictures are removed (below)
@@ -755,16 +752,35 @@ if (CLEANUP_CRON !== 'off') {
   if (cleanup.due(31)) setTimeout(() => cleanup.run('catch-up').catch(() => {}), 60_000).unref();
 }
 
-if (BACKUP_CRON && BACKUP_CRON !== 'off') {
-  if (!cron.validate(BACKUP_CRON)) {
-    console.error(`BACKUP_CRON "${BACKUP_CRON}" is not a valid cron expression (use "off" to disable).`);
-    process.exit(1);
-  }
-  cron.schedule(BACKUP_CRON, async () => {
-    await local.run().catch(() => {});
-    if (drive.status().connected) await drive.sync('nightly').catch(() => {});
-  });
-}
+// ---- the full backup (see plan.js): every N days, this PC first, then Google Drive ----
+const plan = createBackupPlan({
+  getStore: () => store,
+  local,
+  drive,
+  log,
+  // Test-only: shorter "days" and checks.
+  dayMs: Number(process.env.ZB_TEST_DAY_MS) || undefined,
+  checkMs: Number(process.env.ZB_TEST_CHECK_MS) || undefined,
+});
+const backupStatus = () => ({
+  ...plan.status(),
+  status: local.status(), // the last local backup (kept for the CLI and older clients)
+  dir: BACKUP_DIR,
+  keep: BACKUP_KEEP,
+  drive_keep: DRIVE_KEEP,
+  snapshots: local.list().slice(0, BACKUP_KEEP),
+});
+app.get('/api/backup', (req, res) => res.json(backupStatus()));
+app.post('/api/backup', async (req, res) => {
+  const result = await plan.run('manual');
+  res.json({ ...backupStatus(), result, status: result.local.ok ? local.status() : { ok: false, error: result.local.error } });
+});
+app.patch('/api/backup', (req, res) => {
+  plan.setEveryDays(req.body?.every_days);
+  res.json(backupStatus());
+});
+if (process.env.BACKUP_AUTO !== 'off') plan.start(); // BACKUP_AUTO=off: only "Back up now"
+if (process.env.BACKUP_CRON) log('BACKUP_CRON is no longer used: set how often to back up in Menu → Backup & Restore.');
 
 // ---- events ----
 app.get('/api/events', (req, res) => {

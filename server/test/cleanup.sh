@@ -8,7 +8,7 @@ D=$(mktemp -d)
 fuser -k 3200/tcp 4556/tcp 2>/dev/null || true
 MOCK_PORT=4556 MOCK_DELETE_MS=1500 node ../e2e/mock-google.mjs >$D/mock.log 2>&1 &
 MOCK=$!
-APP_PASSWORD=testpw PORT=3200 DATA_DIR=$D/data BACKUP_DIR=$D/bk BACKUP_KEEP=2 BACKUP_CRON=off \
+APP_PASSWORD=testpw PORT=3200 DATA_DIR=$D/data BACKUP_DIR=$D/bk BACKUP_KEEP=2 BACKUP_AUTO=off \
   CLEANUP_CRON=off CLEANUP_AFTER_DAYS=0 \
   GOOGLE_CLIENT_ID=test-id GOOGLE_CLIENT_SECRET=test-secret GOOGLE_BACKUP_PASSPHRASE=test-passphrase \
   GOOGLE_OAUTH_BASE=http://localhost:4556 GOOGLE_API_BASE=http://localhost:4556 \

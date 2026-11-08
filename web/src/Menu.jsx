@@ -10,8 +10,8 @@ export function formatBytes(n) {
 const when = (t) => (t ? new Date(t).toLocaleString() : 'never');
 
 // Pictures go up one by one, then the database snapshot. Measured in bytes, so big files count for more.
-function DriveProgress({ p }) {
-  let label = 'Getting ready…';
+function DriveProgress({ p, label: override }) {
+  let label = override || 'Getting ready…';
   let frac = 0;
   if (p?.phase === 'files' && p.total) {
     frac = p.total_bytes ? p.bytes / p.total_bytes : p.done / p.total;
@@ -30,25 +30,33 @@ function DriveProgress({ p }) {
   );
 }
 
-// cleanupBusy: unused pictures are being removed (this tab started it); the server's `paused` covers other tabs.
-function DriveSection({ cleanupBusy }) {
-  const [s, setS] = useState(null);
-  const [busy, setBusy] = useState(null);
-  const [error, setError] = useState(null);
-  const refresh = useCallback(() => api('GET', '/api/drive').then(setS).catch((e) => setError(e.message)), []);
+const dateOnly = (t) => new Date(t).toLocaleDateString();
+const mark = (part) => (!part ? null : part.ok ? '✓' : part.skipped ? 'postponed' : '✗');
 
+// Backup & Restore: the full backup (this PC, then Google Drive, every N days; see server/src/plan.js),
+// Google Drive's connection and Restore, and the unused-pictures cleanup, in one section.
+// cleanupBusy: unused pictures are being removed (this tab started it); the server's `paused` covers other tabs.
+function BackupSection({ cleanupBusy, onCleanupBusy }) {
+  const [b, setB] = useState(null); // /api/backup: the plan and the local backups
+  const [d, setD] = useState(null); // /api/drive
+  const [busy, setBusy] = useState(null); // 'backup' | 'restore' | 'disconnect' | 'connect' | 'days'
+  const [error, setError] = useState(null);
+  const refresh = useCallback(() => {
+    api('GET', '/api/backup').then(setB).catch((e) => setError(e.message));
+    api('GET', '/api/drive').then(setD).catch((e) => setError(e.message));
+  }, []);
   useEffect(() => {
     refresh();
   }, [refresh, cleanupBusy]);
-  // Poll while signing in, uploading (every second, for the progress bar) or paused by the cleanup.
-  const paused = cleanupBusy || s?.paused;
+  // Poll while backing up (every second, for the progress bar), signing in, or paused by the cleanup.
+  const paused = cleanupBusy || d?.paused;
+  const uploading = d?.running || b?.running || busy === 'backup';
   useEffect(() => {
-    const uploading = s?.running || busy === 'sync';
-    const active = (s?.pending && !s.pending.error) || uploading || paused;
+    const active = uploading || (d?.pending && !d.pending.error) || paused;
     if (!active) return;
     const t = setInterval(refresh, uploading ? 1000 : 2500);
     return () => clearInterval(t);
-  }, [s, busy, paused, refresh]);
+  }, [uploading, d?.pending, paused, refresh]);
 
   async function act(name, fn) {
     setBusy(name);
@@ -62,69 +70,108 @@ function DriveSection({ cleanupBusy }) {
       refresh();
     }
   }
+  const setDays = (v) => {
+    const n = Number(v);
+    if (Number.isInteger(n) && n >= 1 && n <= 30 && n !== b.every_days) act('days', () => api('PATCH', '/api/backup', { every_days: n }));
+  };
 
-  if (!s) return <section className="menu-section"><h4>Google Drive</h4><div className="muted">Loading…</div></section>;
+  const last = b?.last;
+  const driveOn = d?.connected;
   return (
     <section className="menu-section">
-      <h4>Google Drive</h4>
-      {!s.configured ? (
-        <div className="muted">Not set up. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env (see README).</div>
-      ) : s.pending && !s.pending.error ? (
-        <div className="drive-code">
-          <div>
-            Open <a href={s.pending.verification_url} target="_blank" rel="noreferrer">{s.pending.verification_url}</a> and enter:
-          </div>
-          <div className="code">{s.pending.user_code}</div>
-          <div className="muted">Waiting for you to approve…</div>
-        </div>
-      ) : s.connected ? (
+      <h4>Backup & Restore</h4>
+      {b && d ? (
         <>
           <dl className="kv">
             <dt>Last backup</dt>
-            <dd>{when(s.last_sync)}</dd>
-            <dt>Files copied</dt>
-            <dd>{s.files_copied}</dd>
-            {s.encrypted && (
-              <>
-                <dt>Encryption</dt>
-                <dd>Passphrase</dd>
-              </>
-            )}
-            {s.last_error && (
-              <>
-                <dt>Last error</dt>
-                <dd className="error-text">{s.last_error}</dd>
-              </>
-            )}
+            <dd>
+              {last ? (
+                <>
+                  {when(last.at)} · this PC {mark(last.local)}
+                  {last.drive && ` · Google Drive ${mark(last.drive)}`}
+                </>
+              ) : (
+                'never'
+              )}
+            </dd>
+            <dt>
+              <label htmlFor="backup-days">Back up every</label>
+            </dt>
+            <dd>
+              <input
+                id="backup-days"
+                className="days-input"
+                type="number"
+                min={1}
+                max={30}
+                key={b.every_days}
+                defaultValue={b.every_days}
+                disabled={busy === 'days'}
+                onBlur={(e) => setDays(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              />{' '}
+              day{b.every_days === 1 ? '' : 's'} · next {b.next_due && b.next_due > Date.now() ? dateOnly(b.next_due) : 'now'}
+            </dd>
+            <dt>Kept</dt>
+            <dd>
+              {b.keep} on this PC{driveOn ? ` · ${b.drive_keep} on Google Drive` : ''}
+            </dd>
+            <dt>Folder</dt>
+            <dd className="path">{b.dir}</dd>
+            <dt>Google Drive</dt>
+            <dd>
+              {!d.configured
+                ? 'not set up'
+                : driveOn
+                  ? `connected${d.encrypted ? ' · encrypted' : ''}${d.last_sync ? ` · last upload ${when(d.last_sync)}` : ''}`
+                  : 'not connected'}
+            </dd>
           </dl>
-          {s.running && <DriveProgress p={s.progress} />}
-          {paused && <div className="muted drive-paused">Paused while unused pictures are being removed. Back up, Restore and Disconnect come back when that has finished.</div>}
+          {last?.local && !last.local.ok && <div className="error-text">This PC: {last.local.error}</div>}
+          {last?.drive && !last.drive.ok && <div className={last.drive.skipped ? 'muted' : 'error-text'}>Google Drive: {last.drive.error || last.drive.skipped}</div>}
+          {d.last_error && driveOn && <div className="error-text">Google Drive: {d.last_error}</div>}
+          {!d.configured && <div className="muted backup-note">Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env to also back up to Google Drive (see README).</div>}
+          {d.pending && !d.pending.error && (
+            <div className="drive-code">
+              <div>
+                Open <a href={d.pending.verification_url} target="_blank" rel="noreferrer">{d.pending.verification_url}</a> and enter:
+              </div>
+              <div className="code">{d.pending.user_code}</div>
+              <div className="muted">Waiting for you to approve…</div>
+            </div>
+          )}
+          {d.pending?.error && <div className="error-text">{d.pending.error}</div>}
+          {(d.running || busy === 'backup') && <DriveProgress p={d.running ? d.progress : null} label={busy === 'backup' && !d.running ? 'Saving to this PC…' : null} />}
+          {paused && <div className="muted drive-paused">Google Drive is paused while unused pictures are being removed. Restore and Disconnect come back when that has finished.</div>}
           <div className="menu-buttons">
-            <button disabled={!!busy || s.running || paused} onClick={() => act('sync', () => api('POST', '/api/drive/sync'))}>
-              {busy === 'sync' || s.running ? 'Backing up…' : 'Back up now'}
+            <button disabled={!!busy || uploading} onClick={() => act('backup', () => api('POST', '/api/backup'))}>
+              {uploading ? 'Backing up…' : 'Back up now'}
             </button>
-            <button
-              disabled={!!busy || paused}
-              onClick={() => window.confirm('Replace everything on this server with the newest Google Drive backup?') && act('restore', () => api('POST', '/api/drive/restore'))}
-            >
-              {busy === 'restore' ? 'Restoring…' : 'Restore'}
-            </button>
-            <button disabled={!!busy || paused} onClick={() => act('disconnect', () => api('POST', '/api/drive/disconnect'))}>
-              Disconnect
-            </button>
+            {driveOn && (
+              <button
+                disabled={!!busy || paused}
+                onClick={() => window.confirm('Replace everything on this server with the newest Google Drive backup?') && act('restore', () => api('POST', '/api/drive/restore'))}
+              >
+                {busy === 'restore' ? 'Restoring…' : 'Restore from Drive'}
+              </button>
+            )}
+            {driveOn && (
+              <button disabled={!!busy || paused} onClick={() => act('disconnect', () => api('POST', '/api/drive/disconnect'))}>
+                Disconnect Drive
+              </button>
+            )}
+            {d.configured && !driveOn && !(d.pending && !d.pending.error) && (
+              <button disabled={!!busy} onClick={() => act('connect', () => api('POST', '/api/drive/connect'))}>
+                Connect Google Drive
+              </button>
+            )}
           </div>
+          {error && <div className="error-text">{error}</div>}
+          <CleanupSection onBusy={onCleanupBusy} />
         </>
       ) : (
-        <>
-          {s.pending?.error && <div className="error-text">{s.pending.error}</div>}
-          <div className="menu-buttons">
-            <button disabled={!!busy} onClick={() => act('connect', () => api('POST', '/api/drive/connect'))}>
-              Connect Google Drive
-            </button>
-          </div>
-        </>
+        <div className="muted">Loading…</div>
       )}
-      {error && <div className="error-text">{error}</div>}
     </section>
   );
 }
@@ -183,19 +230,19 @@ function CleanupSection({ onBusy }) {
     }
   }
 
-  const schedule = (cron) => (cron === 'off' ? 'off' : cron === '0 4 1 * *' ? 'monthly (1st, 04:00)' : cron);
+  const schedule = (cron) => (cron === 'off' ? 'never (off)' : cron === '0 4 1 * *' ? 'monthly' : cron);
   return (
-    <section className="menu-section">
-      <h4>Unused files</h4>
+    <div className="menu-sub" role="group" aria-labelledby="unused-title">
+      <h5 id="unused-title">Unused pictures</h5>
       {s ? (
         <>
           <dl className="kv">
             <dt>Waiting</dt>
             <dd>{s.unused.count ? `${s.unused.count} (${formatBytes(s.unused.bytes)})` : 'none'}</dd>
-            <dt>Removed after</dt>
-            <dd>{s.after_days} days unused</dd>
-            <dt>Check</dt>
-            <dd>{schedule(s.cron)}</dd>
+            <dt>Removed</dt>
+            <dd>
+              after {s.after_days} days unused · checked {schedule(s.cron)}
+            </dd>
             <dt>Last check</dt>
             <dd className={s.last_error ? 'error-text' : ''}>
               {s.last_run ? `${when(s.last_run)} · removed ${s.last_removed}${s.last_freed ? ` (${formatBytes(s.last_freed)})` : ''}` : 'never'}
@@ -232,7 +279,7 @@ function CleanupSection({ onBusy }) {
           }}
         />
       )}
-    </section>
+    </div>
   );
 }
 
@@ -421,31 +468,12 @@ function ExtensionSection() {
 
 export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
   const [stats, setStats] = useState(null);
-  const [backup, setBackup] = useState(null);
-  const [busy, setBusy] = useState(false);
   const [cleanupBusy, setCleanupBusy] = useState(false); // pauses the Google Drive buttons
-  const [error, setError] = useState(null);
 
-  const load = useCallback(() => {
+  useEffect(() => {
     api('GET', '/api/stats').then(setStats).catch(() => {});
-    api('GET', '/api/backup').then(setBackup).catch(() => {});
   }, []);
-  useEffect(load, [load]);
 
-  async function backupNow() {
-    setBusy(true);
-    setError(null);
-    try {
-      await api('POST', '/api/backup');
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-      load();
-    }
-  }
-
-  const st = backup?.status;
   return (
     <div className="overlay clear" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="menu-panel scrolls" role="dialog" aria-label="Menu">
@@ -469,33 +497,7 @@ export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
           )}
         </section>
 
-        <section className="menu-section">
-          <h4>Backups</h4>
-          {backup && (
-            <dl className="kv">
-              <dt>Last backup</dt>
-              <dd className={st && !st.ok ? 'error-text' : ''}>{st ? (st.ok ? when(st.at) : `Failed: ${st.error}`) : 'never'}</dd>
-              <dt>Schedule</dt>
-              <dd>{backup.cron === 'off' ? 'off' : backup.cron}</dd>
-              <dt>Snapshots</dt>
-              <dd>
-                {backup.snapshots.length} (keeps {backup.keep})
-              </dd>
-              <dt>Folder</dt>
-              <dd className="path">{backup.dir}</dd>
-            </dl>
-          )}
-          <div className="menu-buttons">
-            <button onClick={backupNow} disabled={busy}>
-              {busy ? 'Backing up…' : 'Back up now'}
-            </button>
-          </div>
-          {error && <div className="error-text">{error}</div>}
-        </section>
-
-        <DriveSection cleanupBusy={cleanupBusy} />
-
-        <CleanupSection onBusy={setCleanupBusy} />
+        <BackupSection cleanupBusy={cleanupBusy} onCleanupBusy={setCleanupBusy} />
 
         <ExtensionSection />
 

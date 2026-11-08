@@ -1319,6 +1319,32 @@ kbd {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 11px;
 }
+/* Backup & Restore: the interval box, and the unused-pictures part below a thin line */
+.days-input {
+  width: 3.4em;
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  text-align: right;
+  background: var(--panel);
+  color: var(--ink);
+}
+.backup-note {
+  font-size: 12px;
+  margin: 2px 0 8px;
+}
+.menu-sub {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+.menu-sub h5 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
 /* "Clean up now" confirm window (above the Menu) */
 .confirm-overlay {
   z-index: 200;

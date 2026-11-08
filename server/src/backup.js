@@ -283,7 +283,9 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
     }
   }
 
-  function sync(reason = 'manual') {
+  // snapshotFile: upload this database snapshot (the one the scheduled backup just saved locally, so
+  // both places hold the same backup) instead of making a new one.
+  function sync(reason = 'manual', { snapshotFile = null } = {}) {
     if (!connected()) return Promise.reject(new HttpError(400, 'Google Drive is not connected'));
     if (paused()) {
       if (reason === 'manual') return Promise.reject(new HttpError(409, PAUSED));
@@ -320,13 +322,14 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
           progress = { ...progress, done: copied, bytes: progress.bytes + (file.size || 0) };
         }
         progress = { ...progress, phase: 'snapshot' };
-        const tmp = path.join(dataDir, 'tmp', `drive-${Date.now()}.db`);
-        snapshotTo(getStore(), tmp);
-        const name = `zboard-${stamp()}.db${suffix}`;
+        const own = !snapshotFile;
+        const tmp = snapshotFile || path.join(dataDir, 'tmp', `drive-${Date.now()}.db`);
+        if (own) snapshotTo(getStore(), tmp);
+        const name = (own ? `zboard-${stamp()}.db` : path.basename(snapshotFile)) + suffix;
         try {
           await upload(name, f.snapshots, encrypt(await fs.promises.readFile(tmp)));
         } finally {
-          fs.rmSync(tmp, { force: true });
+          if (own) fs.rmSync(tmp, { force: true });
         }
         const snaps = await listAll(`${qstr(f.snapshots)} in parents and trashed = false`, 'createdTime desc');
         for (const old of snaps.slice(keep)) await api('DELETE', `/drive/v3/files/${old.id}`);

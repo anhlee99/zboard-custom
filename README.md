@@ -25,7 +25,8 @@ things from any page, and a terminal client.
   trackpad still pan and zoom.
 - **Phone**: touch gestures, camera button, installs from the home screen (PWA).
 - **Find**: Ctrl+K search (accent-insensitive) and #tags.
-- **Keep**: nightly local backups, Google Drive backup, zip export of any board.
+- **Keep**: a full backup every few days (you choose, default daily) to a local folder and then Google Drive,
+  Google Drive copies minutes after edits, zip export of any board.
 - **Clip**: ZBoard Clipper for Chrome/Edge saves images, links and text into a board's Saved items.
 - **Terminal**: `zboard` CLI, with images drawn inline over SSH.
 
@@ -81,9 +82,9 @@ from sleeping while plugged in: `powercfg /change standby-timeout-ac 0`. (On nat
 | `APP_PASSWORD` | – (required) | Password for the web app and `zboard login`. |
 | `PORT` | `3000` | HTTP port. |
 | `DATA_DIR` | `./data` | Database, originals (`files/`), thumbnails, the CLI token. Relative paths are from the repo root. |
-| `BACKUP_DIR` | `./backup` | Where nightly backups go. Put it on a second disk. |
-| `BACKUP_CRON` | `0 3 * * *` | When the nightly backup runs (cron syntax). `off` disables it. |
+| `BACKUP_DIR` | `./backup` | Where local backups go. Put it on a second disk. |
 | `BACKUP_KEEP` | `14` | Local snapshots to keep. |
+| `BACKUP_AUTO` | – | `off` stops the automatic full backup (only **Back up now** then). How often it runs is set in **Menu → Backup & Restore**. `BACKUP_CRON` is no longer used. |
 | `CLEANUP_CRON` | `0 4 1 * *` | When unused pictures are checked (1st of each month, 04:00). A run missed while ZBoard was off happens at the next start. `off` disables it. |
 | `CLEANUP_AFTER_DAYS` | `30` | A picture no card or saved item uses is removed (original, previews, local backup copy, Drive copy) once unused this long **and** older than every kept backup. |
 | `MAX_UPLOAD_MB` | `50` | Largest upload. |
@@ -182,17 +183,20 @@ It only uses the `drive.file` scope: it can see the files it created (the `ZBoar
 What happens then:
 
 - Each original image is uploaded once into `ZBoard Backup/files/`.
-- A database snapshot is uploaded to `ZBoard Backup/snapshots/` 1–2 minutes after edits stop, and nightly
-  (with the local backup, `BACKUP_CRON`). The last 30 snapshots are kept.
-- **Restore** (Menu → Google Drive → Restore) downloads the newest snapshot and every original it needs and
+- A database snapshot is uploaded to `ZBoard Backup/snapshots/` 1–2 minutes after edits stop, and with every
+  full backup (the same snapshot the local backup just saved). The last 30 snapshots are kept.
+- **Restore** (Menu → Backup & Restore → Restore from Drive) downloads the newest snapshot and every original it needs and
   replaces this server's data. To move to a new machine: start ZBoard with an empty `data/`, connect the same
   Google account, press Restore. An empty server never uploads a snapshot by itself, so it can't overwrite your backup.
 
 ## Backup and restore
 
-- **Nightly** (`BACKUP_CRON`): a consistent snapshot of the database (`VACUUM INTO`) in `BACKUP_DIR/db/`, the
-  last `BACKUP_KEEP` kept, plus a copy of every new original image in `BACKUP_DIR/files/`.
-  **Menu → Backups → Back up now** runs one immediately.
+- **Full backup, every N days** (**Menu → Backup & Restore → Back up every**, 1–30 days, default 1): first a
+  consistent snapshot of the database (`VACUUM INTO`) in `BACKUP_DIR/db/`, the last `BACKUP_KEEP` kept, plus a
+  copy of every new original image in `BACKUP_DIR/files/`; then, if Google Drive is connected, that same snapshot
+  and any new originals go to Drive. ZBoard checks at start-up and every hour whether one is due, so a backup
+  missed while the PC was off runs as soon as ZBoard is up again. A failed local part doesn't stop the Drive part.
+  **Back up now** runs one immediately.
 - **Restore from a local backup**: stop ZBoard, then
 
   ```bash
@@ -206,7 +210,7 @@ What happens then:
 - **Unused pictures**: deleting a card keeps its picture (undo and older backups may need it). A monthly
   check (`CLEANUP_CRON`) removes a picture everywhere (original, previews, local backup, Google Drive) once
   nothing has used it for `CLEANUP_AFTER_DAYS` and every kept backup is newer than that, so a backup you can
-  still restore never misses a picture. **Menu → Unused files** shows what is waiting and runs the check now.
+  still restore never misses a picture. **Menu → Backup & Restore → Unused pictures** shows what is waiting, runs the check now, and **Clean up now…** removes them at once after reading every kept backup.
 - **Export**: Menu → Export gives a zip of a board (or everything) with a `board.json` and the original files.
 
 ## Docker
