@@ -19,6 +19,11 @@
 </p>
 
 <p align="center">
+  <a href="https://endiluong.github.io/zboard/"><b>▶ Try the demo in your browser</b></a><br>
+  <sub>No sign-up and nothing to install. Starts empty, and everything stays in your own browser.</sub>
+</p>
+
+<p align="center">
   <a href="#-a-quick-tour">Tour</a> ·
   <a href="#-quick-start">Quick start</a> ·
   <a href="#-how-it-fits-together">How it works</a> ·
@@ -402,8 +407,13 @@ Checks:
 
 - `cd server && npm test`: API checks with curl on a throwaway data dir (port 3999).
 - `e2e/`: headless browser checks with an installed Edge (`npm install` in `e2e/`, run from Windows),
-  against a server started with `APP_PASSWORD=testpw` and an empty data dir: `node e2e/step2.mjs` … `step23.mjs`;
+  against a server started with `APP_PASSWORD=testpw` and an empty data dir: `node e2e/step2.mjs` … `step26.mjs`;
   `step4` also needs `e2e/mock-google.mjs`. `bash e2e/step8.sh` checks the CLI.
+- **Online demo** (`web/demo/`): `node demo/build.mjs` (in `web/`) builds the app into `web/dist-demo` with
+  `server/src/db.js` running in a service worker on SQLite compiled to WebAssembly. Each visitor's boards and
+  pictures stay in their own browser (IndexedDB). `node demo/test.mjs` checks that in-browser server, and
+  `node e2e/step27-demo.mjs` checks the built demo in a browser. `.github/workflows/pages.yml` publishes it to
+  GitHub Pages on every push to `main`.
 - `./stress-test.sh 1000` makes a 1000-image board from your uploaded images; `./stress-test.sh --cleanup` removes it.
 
 The screenshots in this README live in `docs/screenshots/`.

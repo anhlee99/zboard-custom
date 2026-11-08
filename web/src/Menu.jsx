@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
+import { DEMO, REPO_URL, resetDemo } from './demo.js';
 
 export function formatBytes(n) {
   if (!n) return '0 B';
@@ -519,10 +520,31 @@ export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
           )}
         </section>
 
-        <BackupSection cleanupBusy={cleanupBusy} onCleanupBusy={setCleanupBusy} />
+        {DEMO ? (
+          <section className="menu-section">
+            <h4>About this demo</h4>
+            <p className="muted">
+              Everything you make is saved only in this browser: nothing is sent anywhere, and other people can't see it. Clearing the browser's site data
+              removes it.
+            </p>
+            <p className="muted">
+              Your own ZBoard adds what a server can do: every device in sync, Google Drive backups, the browser clipper, link previews and a terminal client.
+            </p>
+            <div className="menu-buttons">
+              <a className="button" href={REPO_URL} target="_blank" rel="noreferrer">
+                Get ZBoard on GitHub
+              </a>
+              <button onClick={() => confirm('Delete everything in this demo and start with an empty board?') && resetDemo()}>Start over</button>
+            </div>
+          </section>
+        ) : (
+          <>
+            <BackupSection cleanupBusy={cleanupBusy} onCleanupBusy={setCleanupBusy} />
+            <ExtensionSection />
+          </>
+        )}
 
-        <ExtensionSection />
-
+        {!DEMO && (
         <section className="menu-section">
           <h4>Export</h4>
           <div className="menu-buttons">
@@ -536,12 +558,15 @@ export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
             </a>
           </div>
         </section>
+        )}
 
-        <section className="menu-section">
-          <div className="menu-buttons">
-            <button onClick={onLogout}>Log out</button>
-          </div>
-        </section>
+        {!DEMO && (
+          <section className="menu-section">
+            <div className="menu-buttons">
+              <button onClick={onLogout}>Log out</button>
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

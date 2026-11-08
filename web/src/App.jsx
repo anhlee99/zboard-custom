@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, setUnauthorizedHandler } from './api.js';
+import { DEMO, REPO_URL } from './demo.js';
 import Board from './Board.jsx';
 import { Icon } from './icons.jsx';
 import Menu from './Menu.jsx';
@@ -194,6 +195,16 @@ export default function App() {
           </button>
         </div>
       </header>
+      {DEMO && (
+        <div className="demo-banner">
+          <span>
+            <b>Demo</b> · everything you make stays in this browser
+          </span>
+          <a href={REPO_URL} target="_blank" rel="noreferrer">
+            Host your own ↗
+          </a>
+        </div>
+      )}
       <Board
         key={route.board}
         boardId={route.board}
