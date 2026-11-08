@@ -84,6 +84,8 @@ http
       if (p.startsWith('/upload-session/') && req.method === 'PUT') {
         const meta = sessions.get(p.split('/').pop());
         if (!meta) return json(res, 404, { error: 'no session' });
+        // MOCK_UPLOAD_MS slows each upload down like a real connection (progress checks need it).
+        if (process.env.MOCK_UPLOAD_MS) await new Promise((r) => setTimeout(r, Number(process.env.MOCK_UPLOAD_MS)));
         return json(res, 200, { id: create(meta, body).id });
       }
       if (!/^Bearer at-/.test(req.headers.authorization || '')) return json(res, 401, { error: 'unauthenticated' });
