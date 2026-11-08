@@ -1,4 +1,4 @@
-// Unused pictures. ZBoard never deletes a picture when its card goes (undo and older backups may still
+// Unused files (pictures and any other uploads). ZBoard never deletes a file when its card goes (undo and older backups may still
 // need it). Two ways remove it for good, everywhere (Google Drive first, so a Drive copy is never left
 // behind, then the local backup copy, the original and its previews, then the database rows):
 //
@@ -6,9 +6,9 @@
 //   once nothing has used it for `afterDays` (files.unused_since, kept up to date by every check) AND
 //   every backup still kept, local and Drive, was made after it became unused.
 // - "Clean up now" in the Menu: reads every kept backup (Drive ones are downloaded and decrypted) and,
-//   after you confirm, removes the unused pictures none of them mentions, without waiting.
+//   after you confirm, removes the unused files none of them mentions, without waiting.
 //
-// Either way a backup you can still restore never misses a picture.
+// Either way a backup you can still restore never misses a file.
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -56,13 +56,13 @@ export function createCleanup({ getStore, afterDays, localSnapshots, localDir, t
       last_waiting: s.last_waiting ?? 0,
       last_error: s.last_error ?? null,
       last_reason: s.last_reason ?? null, // 'scheduled', 'catch-up', 'manual' or 'clean up now'
-      oldest_backup: s.oldest_backup ?? null, // pictures unused since before this wait for it to rotate out
+      oldest_backup: s.oldest_backup ?? null, // files unused since before this wait for it to rotate out
       running: Boolean(running),
       job: running && job ? { phase: job.phase, removed: job.removed, total: job.total, freed: job.freed } : null,
     };
   }
 
-  // Disconnecting forgets which pictures are on Drive, so their copies there couldn't be removed:
+  // Disconnecting forgets which files are on Drive, so their copies there couldn't be removed:
   // remove nothing until Drive is connected again (or its keys are taken out of .env).
   function assertDriveReady() {
     if (drive.status().configured && !drive.connected()) {
@@ -122,7 +122,7 @@ export function createCleanup({ getStore, afterDays, localSnapshots, localDir, t
   const run = (reason = 'manual') => exclusive(() => sweep(reason)).then(status);
 
   // ---- "Clean up now": by what the kept backups actually contain ----
-  // Unused pictures that no kept backup mentions, plus how many a backup still holds on to.
+  // Unused files that no kept backup mentions, plus how many a backup still holds on to.
   async function findRemovable() {
     assertDriveReady();
     await drive.idle(); // its snapshot list must not change while we read it
@@ -153,7 +153,7 @@ export function createCleanup({ getStore, afterDays, localSnapshots, localDir, t
       return {
         count: removable.length,
         bytes: removable.reduce((n, f) => n + (f.size || 0), 0),
-        files: removable.map((f) => ({ id: f.id, name: f.name, size: f.size, unused_since: f.unused_since })),
+        files: removable.map((f) => ({ id: f.id, name: f.name, size: f.size, mime: f.mime, ext: f.ext, unused_since: f.unused_since })),
         kept_by_backup: keptByBackup,
         checked,
         drive: drive.connected(),

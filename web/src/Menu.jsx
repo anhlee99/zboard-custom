@@ -9,16 +9,16 @@ export function formatBytes(n) {
 }
 const when = (t) => (t ? new Date(t).toLocaleString() : 'never');
 
-// Pictures go up one by one, then the database snapshot. Measured in bytes, so big files count for more.
-function DriveProgress({ p }) {
-  let label = 'Getting ready…';
+// Files go up one by one, then the database snapshot. Measured in bytes, so big files count for more.
+function DriveProgress({ p, label: override }) {
+  let label = override || 'Getting ready…';
   let frac = 0;
   if (p?.phase === 'files' && p.total) {
     frac = p.total_bytes ? p.bytes / p.total_bytes : p.done / p.total;
-    label = `Uploading pictures ${p.done} of ${p.total} · ${formatBytes(p.bytes)} of ${formatBytes(p.total_bytes)}`;
+    label = `Uploading files ${p.done} of ${p.total} · ${formatBytes(p.bytes)} of ${formatBytes(p.total_bytes)}`;
   } else if (p?.phase === 'snapshot') {
     frac = 1;
-    label = p.total ? `Pictures done (${p.total}) · uploading the database snapshot…` : 'Uploading the database snapshot…';
+    label = p.total ? `Files done (${p.total}) · uploading the database snapshot…` : 'Uploading the database snapshot…';
   }
   return (
     <div className="drive-progress">
@@ -30,25 +30,43 @@ function DriveProgress({ p }) {
   );
 }
 
-// cleanupBusy: unused pictures are being removed (this tab started it); the server's `paused` covers other tabs.
-function DriveSection({ cleanupBusy }) {
-  const [s, setS] = useState(null);
-  const [busy, setBusy] = useState(null);
-  const [error, setError] = useState(null);
-  const refresh = useCallback(() => api('GET', '/api/drive').then(setS).catch((e) => setError(e.message)), []);
+const dateOnly = (t) => new Date(t).toLocaleDateString();
+const isPicture = (f) => (f.mime || '').startsWith('image/') || /^\.(jpe?g|png|webp|gif|avif|heic|heif)$/i.test(f.ext || '');
 
+// The Google Drive mark, for the Drive buttons.
+const DriveLogo = () => (
+  <svg className="drive-logo" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+    <path fill="#00ac47" d="M8.6 3.3 1 16.5l3.8 6.6 7.6-13.2z" />
+    <path fill="#ffba00" d="M8.6 3.3h6.8L23 16.5h-7.6z" />
+    <path fill="#2684fc" d="M4.8 23.1h14.4l3.8-6.6H8.6z" />
+  </svg>
+);
+const mark = (part) => (!part ? null : part.ok ? '✓' : part.skipped ? 'postponed' : '✗');
+
+// Backup & Restore: the full backup (this PC, then Google Drive, every N days; see server/src/plan.js),
+// Google Drive's connection and Restore, and the unused-files cleanup, in one section.
+// cleanupBusy: unused files are being removed (this tab started it); the server's `paused` covers other tabs.
+function BackupSection({ cleanupBusy, onCleanupBusy }) {
+  const [b, setB] = useState(null); // /api/backup: the plan and the local backups
+  const [d, setD] = useState(null); // /api/drive
+  const [busy, setBusy] = useState(null); // 'backup' | 'restore' | 'disconnect' | 'connect' | 'days'
+  const [error, setError] = useState(null);
+  const refresh = useCallback(() => {
+    api('GET', '/api/backup').then(setB).catch((e) => setError(e.message));
+    api('GET', '/api/drive').then(setD).catch((e) => setError(e.message));
+  }, []);
   useEffect(() => {
     refresh();
   }, [refresh, cleanupBusy]);
-  // Poll while signing in, uploading (every second, for the progress bar) or paused by the cleanup.
-  const paused = cleanupBusy || s?.paused;
+  // Poll while backing up (every second, for the progress bar), signing in, or paused by the cleanup.
+  const paused = cleanupBusy || d?.paused;
+  const uploading = d?.running || b?.running || busy === 'backup';
   useEffect(() => {
-    const uploading = s?.running || busy === 'sync';
-    const active = (s?.pending && !s.pending.error) || uploading || paused;
+    const active = uploading || (d?.pending && !d.pending.error) || paused;
     if (!active) return;
     const t = setInterval(refresh, uploading ? 1000 : 2500);
     return () => clearInterval(t);
-  }, [s, busy, paused, refresh]);
+  }, [uploading, d?.pending, paused, refresh]);
 
   async function act(name, fn) {
     setBusy(name);
@@ -62,74 +80,117 @@ function DriveSection({ cleanupBusy }) {
       refresh();
     }
   }
+  const setDays = (v) => {
+    const n = Number(v);
+    if (Number.isInteger(n) && n >= 1 && n <= 30 && n !== b.every_days) act('days', () => api('PATCH', '/api/backup', { every_days: n }));
+  };
 
-  if (!s) return <section className="menu-section"><h4>Google Drive</h4><div className="muted">Loading…</div></section>;
+  const last = b?.last;
+  const driveOn = d?.connected;
   return (
     <section className="menu-section">
-      <h4>Google Drive</h4>
-      {!s.configured ? (
-        <div className="muted">Not set up. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env (see README).</div>
-      ) : s.pending && !s.pending.error ? (
-        <div className="drive-code">
-          <div>
-            Open <a href={s.pending.verification_url} target="_blank" rel="noreferrer">{s.pending.verification_url}</a> and enter:
-          </div>
-          <div className="code">{s.pending.user_code}</div>
-          <div className="muted">Waiting for you to approve…</div>
-        </div>
-      ) : s.connected ? (
+      <h4>Backup & Restore</h4>
+      {b && d ? (
         <>
           <dl className="kv">
             <dt>Last backup</dt>
-            <dd>{when(s.last_sync)}</dd>
-            <dt>Files copied</dt>
-            <dd>{s.files_copied}</dd>
-            {s.encrypted && (
-              <>
-                <dt>Encryption</dt>
-                <dd>Passphrase</dd>
-              </>
-            )}
-            {s.last_error && (
-              <>
-                <dt>Last error</dt>
-                <dd className="error-text">{s.last_error}</dd>
-              </>
-            )}
+            <dd>
+              {last ? (
+                <>
+                  {when(last.at)} · this PC {mark(last.local)}
+                  {last.drive && ` · Google Drive ${mark(last.drive)}`}
+                </>
+              ) : b.status?.ok ? (
+                `${when(b.status.at)} · this PC ✓` // made before the full backup existed (or by an older version)
+              ) : (
+                'never'
+              )}
+            </dd>
+            <dt>
+              <label htmlFor="backup-days">Back up every</label>
+            </dt>
+            <dd>
+              <input
+                id="backup-days"
+                className="days-input"
+                type="number"
+                min={1}
+                max={30}
+                key={b.every_days}
+                defaultValue={b.every_days}
+                disabled={busy === 'days'}
+                onBlur={(e) => setDays(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              />{' '}
+              day{b.every_days === 1 ? '' : 's'} · next {b.next_due && b.next_due > Date.now() ? dateOnly(b.next_due) : 'now'}
+            </dd>
+            <dt>Kept</dt>
+            <dd>
+              {b.keep} on this PC{driveOn ? ` · ${b.drive_keep} on Google Drive` : ''}
+            </dd>
+            <dt>Folder</dt>
+            <dd className="path">{b.dir}</dd>
+            <dt>Google Drive</dt>
+            <dd>
+              {!d.configured
+                ? 'not set up'
+                : driveOn
+                  ? `connected${d.encrypted ? ' · encrypted' : ''}${d.last_sync ? ` · last upload ${when(d.last_sync)}` : ''}`
+                  : 'not connected'}
+            </dd>
           </dl>
-          {s.running && <DriveProgress p={s.progress} />}
-          {paused && <div className="muted drive-paused">Paused while unused pictures are being removed. Back up, Restore and Disconnect come back when that has finished.</div>}
-          <div className="menu-buttons">
-            <button disabled={!!busy || s.running || paused} onClick={() => act('sync', () => api('POST', '/api/drive/sync'))}>
-              {busy === 'sync' || s.running ? 'Backing up…' : 'Back up now'}
+          {last?.local && !last.local.ok && <div className="error-text">This PC: {last.local.error}</div>}
+          {last?.drive && !last.drive.ok && <div className={last.drive.skipped ? 'muted' : 'error-text'}>Google Drive: {last.drive.error || last.drive.skipped}</div>}
+          {d.last_error && driveOn && <div className="error-text">Google Drive: {d.last_error}</div>}
+          {!d.configured && <div className="muted backup-note">Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env to also back up to Google Drive (see README).</div>}
+          {d.pending && !d.pending.error && (
+            <div className="drive-code">
+              <div>
+                Open <a href={d.pending.verification_url} target="_blank" rel="noreferrer">{d.pending.verification_url}</a> and enter:
+              </div>
+              <div className="code">{d.pending.user_code}</div>
+              <div className="muted">Waiting for you to approve…</div>
+            </div>
+          )}
+          {d.pending?.error && <div className="error-text">{d.pending.error}</div>}
+          {(d.running || busy === 'backup') && <DriveProgress p={d.running ? d.progress : null} label={busy === 'backup' && !d.running ? 'Saving to this PC…' : null} />}
+          {paused && <div className="muted drive-paused">Google Drive is paused while unused files are being removed. Restore and Disconnect come back when that has finished.</div>}
+          <div className="menu-buttons one-row">
+            <button disabled={!!busy || uploading} onClick={() => act('backup', () => api('POST', '/api/backup'))}>
+              {uploading ? 'Backing up…' : 'Back up now'}
             </button>
-            <button
-              disabled={!!busy || paused}
-              onClick={() => window.confirm('Replace everything on this server with the newest Google Drive backup?') && act('restore', () => api('POST', '/api/drive/restore'))}
-            >
-              {busy === 'restore' ? 'Restoring…' : 'Restore'}
-            </button>
-            <button disabled={!!busy || paused} onClick={() => act('disconnect', () => api('POST', '/api/drive/disconnect'))}>
-              Disconnect
-            </button>
+            {driveOn && (
+              <button
+                disabled={!!busy || paused}
+                aria-label="Restore from Google Drive"
+                data-tip="Restore from Google Drive"
+                onClick={() => window.confirm('Replace everything on this server with the newest Google Drive backup?') && act('restore', () => api('POST', '/api/drive/restore'))}
+              >
+                {busy === 'restore' ? 'Restoring…' : 'Restore'} <DriveLogo />
+              </button>
+            )}
+            {driveOn && (
+              <button disabled={!!busy || paused} aria-label="Disconnect Google Drive" data-tip="Disconnect Google Drive" onClick={() => act('disconnect', () => api('POST', '/api/drive/disconnect'))}>
+                Disconnect <DriveLogo />
+              </button>
+            )}
+            {d.configured && !driveOn && !(d.pending && !d.pending.error) && (
+              <button disabled={!!busy} onClick={() => act('connect', () => api('POST', '/api/drive/connect'))}>
+                Connect Google Drive
+              </button>
+            )}
           </div>
+          {error && <div className="error-text">{error}</div>}
+          <CleanupSection onBusy={onCleanupBusy} />
         </>
       ) : (
-        <>
-          {s.pending?.error && <div className="error-text">{s.pending.error}</div>}
-          <div className="menu-buttons">
-            <button disabled={!!busy} onClick={() => act('connect', () => api('POST', '/api/drive/connect'))}>
-              Connect Google Drive
-            </button>
-          </div>
-        </>
+        <div className="muted">Loading…</div>
       )}
-      {error && <div className="error-text">{error}</div>}
     </section>
   );
 }
 
-// Pictures no card uses any more: how many wait, and when they go (see server/src/cleanup.js).
+// Files no card uses any more: how many wait, and when they go (see server/src/cleanup.js).
 // A "Clean up now" removal runs on the server in the background; this shows its progress and result.
 function CleanupSection({ onBusy }) {
   const [s, setS] = useState(null);
@@ -153,7 +214,7 @@ function CleanupSection({ onBusy }) {
     if (!removing.current || !s || s.running) return;
     removing.current = false;
     if (s.last_error) setError(`Stopped after removing ${s.last_removed}: ${s.last_error}`);
-    else setDone(`Removed ${s.last_removed} picture${s.last_removed === 1 ? '' : 's'} and freed ${formatBytes(s.last_freed)}.`);
+    else setDone(`Removed ${s.last_removed} file${s.last_removed === 1 ? '' : 's'} and freed ${formatBytes(s.last_freed)}.`);
   }, [s]);
 
   async function runNow() {
@@ -183,19 +244,19 @@ function CleanupSection({ onBusy }) {
     }
   }
 
-  const schedule = (cron) => (cron === 'off' ? 'off' : cron === '0 4 1 * *' ? 'monthly (1st, 04:00)' : cron);
+  const schedule = (cron) => (cron === 'off' ? 'never (off)' : cron === '0 4 1 * *' ? 'monthly' : cron);
   return (
-    <section className="menu-section">
-      <h4>Unused files</h4>
+    <div className="menu-sub" role="group" aria-labelledby="unused-title">
+      <h5 id="unused-title">Unused files</h5>
       {s ? (
         <>
           <dl className="kv">
             <dt>Waiting</dt>
             <dd>{s.unused.count ? `${s.unused.count} (${formatBytes(s.unused.bytes)})` : 'none'}</dd>
-            <dt>Removed after</dt>
-            <dd>{s.after_days} days unused</dd>
-            <dt>Check</dt>
-            <dd>{schedule(s.cron)}</dd>
+            <dt>Removed</dt>
+            <dd>
+              after {s.after_days} days unused · checked {schedule(s.cron)}
+            </dd>
             <dt>Last check</dt>
             <dd className={s.last_error ? 'error-text' : ''}>
               {s.last_run ? `${when(s.last_run)} · removed ${s.last_removed}${s.last_freed ? ` (${formatBytes(s.last_freed)})` : ''}` : 'never'}
@@ -203,8 +264,8 @@ function CleanupSection({ onBusy }) {
             </dd>
           </dl>
           <div className="muted cleanup-note">
-            Pictures no card uses any more. Each is removed everywhere (here, local backup, Google Drive) once unused for {s.after_days} days and older
-            than every backup still kept, so restoring a backup never misses a picture.
+            Files no card uses any more. Each is removed everywhere (here, local backup, Google Drive) once unused for {s.after_days} days and older
+            than every backup still kept, so restoring a backup never misses a file.
           </div>
           {s.job && <CleanupProgress job={s.job} />}
           <div className="menu-buttons">
@@ -232,7 +293,7 @@ function CleanupSection({ onBusy }) {
           }}
         />
       )}
-    </section>
+    </div>
   );
 }
 
@@ -284,15 +345,23 @@ function CleanupConfirm({ found, onClose, onStarted }) {
       <div className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="cleanup-title" aria-describedby="cleanup-loss">
         {n ? (
           <>
-            <h3 id="cleanup-title">Permanently remove {plural(n, 'unused picture', 'unused pictures')}?</h3>
+            <h3 id="cleanup-title">Permanently remove {plural(n, 'unused file', 'unused files')}?</h3>
             <p className="confirm-lead">
               <strong>{formatBytes(found.bytes)}</strong> · no board, card or saved item uses {n === 1 ? 'it' : 'them'},{' '}
               {found.checked.local + found.checked.drive ? `and none of your ${backups} contains ${n === 1 ? 'it' : 'them'}.` : 'and there is no backup that could need them.'}
             </p>
-            <div className="confirm-thumbs" aria-label="Pictures that will be removed">
-              {shown.map((f) => (
-                <img key={f.id} src={`/files/${f.id}/thumb`} alt={f.name || ''} title={`${f.name || f.id} · ${formatBytes(f.size)}`} loading="lazy" />
-              ))}
+            <div className="confirm-thumbs" aria-label="Files that will be removed">
+              {shown.map((f) => {
+                const title = `${f.name || f.id} · ${formatBytes(f.size)}`;
+                // Pictures show their preview; any other file (PDF, ZIP…) a tile with its type.
+                return isPicture(f) ? (
+                  <img key={f.id} src={`/files/${f.id}/thumb`} alt={f.name || ''} title={title} loading="lazy" />
+                ) : (
+                  <div key={f.id} className="confirm-file" title={title}>
+                    <span>{(f.ext || '').replace('.', '').toUpperCase() || 'FILE'}</span>
+                  </div>
+                );
+              })}
               {n > shown.length && <div className="confirm-more">+{n - shown.length} more</div>}
             </div>
             <div className="confirm-where">
@@ -304,13 +373,13 @@ function CleanupConfirm({ found, onClose, onStarted }) {
               </ul>
             </div>
             <div className="confirm-loss" id="cleanup-loss">
-              <strong>This can’t be undone.</strong> Once removed, {n === 1 ? 'this picture' : 'these pictures'} can’t be brought back: not with Undo, not from a local
+              <strong>This can’t be undone.</strong> Once removed, {n === 1 ? 'this file' : 'these files'} can’t be brought back: not with Undo, not from a local
               backup{found.drive ? ', not with a Google Drive restore' : ''}. Your boards stay exactly as they are, because none of them uses{' '}
-              {n === 1 ? 'it' : 'these pictures'}.
+              {n === 1 ? 'it' : 'these files'}.
             </div>
             {found.kept_by_backup > 0 && (
               <p className="muted">
-                {plural(found.kept_by_backup, 'other unused picture is', 'other unused pictures are')} still inside a kept backup, so{' '}
+                {plural(found.kept_by_backup, 'other unused file is', 'other unused files are')} still inside a kept backup, so{' '}
                 {found.kept_by_backup === 1 ? 'it stays' : 'they stay'} until that backup is replaced.
               </p>
             )}
@@ -320,7 +389,7 @@ function CleanupConfirm({ found, onClose, onStarted }) {
                 Cancel
               </button>
               <button className="danger-solid" onClick={remove} disabled={removing}>
-                {removing ? 'Starting…' : `Remove ${plural(n, 'picture', 'pictures')}`}
+                {removing ? 'Starting…' : `Remove ${plural(n, 'file', 'files')}`}
               </button>
             </div>
           </>
@@ -329,8 +398,8 @@ function CleanupConfirm({ found, onClose, onStarted }) {
             <h3 id="cleanup-title">Nothing to remove right now</h3>
             <p id="cleanup-loss">
               {found.kept_by_backup
-                ? `${plural(found.kept_by_backup, 'unused picture is', 'unused pictures are')} still inside a kept backup (${backups}), so ${found.kept_by_backup === 1 ? 'it stays' : 'they stay'} until that backup is replaced. The monthly check removes ${found.kept_by_backup === 1 ? 'it' : 'them'} after that.`
-                : 'Every picture is in use.'}
+                ? `${plural(found.kept_by_backup, 'unused file is', 'unused files are')} still inside a kept backup (${backups}), so ${found.kept_by_backup === 1 ? 'it stays' : 'they stay'} until that backup is replaced. The monthly check removes ${found.kept_by_backup === 1 ? 'it' : 'them'} after that.`
+                : 'Every file is in use.'}
             </p>
             <div className="confirm-buttons">
               <button ref={cancelRef} onClick={onClose}>
@@ -421,31 +490,12 @@ function ExtensionSection() {
 
 export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
   const [stats, setStats] = useState(null);
-  const [backup, setBackup] = useState(null);
-  const [busy, setBusy] = useState(false);
   const [cleanupBusy, setCleanupBusy] = useState(false); // pauses the Google Drive buttons
-  const [error, setError] = useState(null);
 
-  const load = useCallback(() => {
+  useEffect(() => {
     api('GET', '/api/stats').then(setStats).catch(() => {});
-    api('GET', '/api/backup').then(setBackup).catch(() => {});
   }, []);
-  useEffect(load, [load]);
 
-  async function backupNow() {
-    setBusy(true);
-    setError(null);
-    try {
-      await api('POST', '/api/backup');
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-      load();
-    }
-  }
-
-  const st = backup?.status;
   return (
     <div className="overlay clear" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="menu-panel scrolls" role="dialog" aria-label="Menu">
@@ -469,33 +519,7 @@ export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
           )}
         </section>
 
-        <section className="menu-section">
-          <h4>Backups</h4>
-          {backup && (
-            <dl className="kv">
-              <dt>Last backup</dt>
-              <dd className={st && !st.ok ? 'error-text' : ''}>{st ? (st.ok ? when(st.at) : `Failed: ${st.error}`) : 'never'}</dd>
-              <dt>Schedule</dt>
-              <dd>{backup.cron === 'off' ? 'off' : backup.cron}</dd>
-              <dt>Snapshots</dt>
-              <dd>
-                {backup.snapshots.length} (keeps {backup.keep})
-              </dd>
-              <dt>Folder</dt>
-              <dd className="path">{backup.dir}</dd>
-            </dl>
-          )}
-          <div className="menu-buttons">
-            <button onClick={backupNow} disabled={busy}>
-              {busy ? 'Backing up…' : 'Back up now'}
-            </button>
-          </div>
-          {error && <div className="error-text">{error}</div>}
-        </section>
-
-        <DriveSection cleanupBusy={cleanupBusy} />
-
-        <CleanupSection onBusy={setCleanupBusy} />
+        <BackupSection cleanupBusy={cleanupBusy} onCleanupBusy={setCleanupBusy} />
 
         <ExtensionSection />
 
