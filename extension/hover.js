@@ -77,17 +77,19 @@
     }
   }
 
-  function place(el, r, w, h) {
-    // Inside the image's top-left corner, kept on screen.
-    el.style.left = Math.max(6, Math.min(innerWidth - w - 6, r.left + 8)) + 'px';
-    el.style.top = Math.max(6, Math.min(innerHeight - h - 6, r.top + 8)) + 'px';
+  // `gap` px inside the top-left corner of the part of `r` that is on screen, kept on screen.
+  function place(el, r, w, h, gap = 8) {
+    const left = Math.max(r.left, 0) + gap;
+    const top = Math.max(r.top, 0) + gap;
+    el.style.left = Math.max(2, Math.min(innerWidth - w - 2, left)) + 'px';
+    el.style.top = Math.max(2, Math.min(innerHeight - h - 2, top)) + 'px';
   }
 
   function show(img) {
     target = img;
     clearTimeout(hideTimer);
     btn.style.display = 'flex';
-    place(btn, img.getBoundingClientRect(), 80, 30);
+    place(btn, img.getBoundingClientRect(), 80, 30, 2); // 2 px inside the image's (visible) top-left corner
   }
 
   function hide(all) {
@@ -108,25 +110,59 @@
   };
 
   // Many sites cover images with a transparent layer, so look under the pointer, not at the event target.
+  // The <img> you are actually looking at: walk down from the top, skipping see-through layers, and
+  // give up at the first thing that is itself visible (an opaque panel, a CSS background picture,
+  // a canvas or video): then the pointer is not on an <img>, even if one lies further below.
+  function covers(el) {
+    if (/^(CANVAS|VIDEO|IFRAME|EMBED|OBJECT)$/.test(el.tagName) || el instanceof SVGSVGElement) return true;
+    const st = getComputedStyle(el);
+    if (st.visibility === 'hidden' || Number(st.opacity) < 0.1) return false;
+    if (/url\(/.test(st.backgroundImage)) return true;
+    const a = st.backgroundColor.match(/rgba?\(([^)]+)\)/);
+    const alpha = a ? Number(a[1].split(',')[3] ?? 1) : 0;
+    return alpha >= 0.9;
+  }
   function imageAt(x, y) {
-    for (const el of document.elementsFromPoint(x, y).slice(0, 8)) if (el instanceof HTMLImageElement) return el;
+    for (const el of document.elementsFromPoint(x, y).slice(0, 12)) {
+      if (el === host) continue;
+      if (el instanceof HTMLImageElement) return el;
+      if (covers(el)) return null;
+    }
     return null;
   }
 
+  // Looks at most every 60 ms, and always once more where the pointer stopped (a move inside the
+  // 60 ms was dropped before, so the button could stay on the image the pointer had just left).
   let lastMove = 0;
+  let pending = null; // the newest move not looked at yet
+  let trailing = 0;
+  function look({ x, y, onButton }) {
+    lastMove = performance.now();
+    if (onButton) return clearTimeout(hideTimer);
+    const img = imageAt(x, y);
+    if (img && usable(img)) show(img);
+    else if (target) {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => hide(false), 250);
+    }
+  }
   document.addEventListener(
     'mousemove',
     (e) => {
       if (!enabled || panel.style.display === 'flex') return;
-      const now = performance.now();
-      if (now - lastMove < 60) return;
-      lastMove = now;
-      if (e.composedPath().includes(host)) return clearTimeout(hideTimer);
-      const img = imageAt(e.clientX, e.clientY);
-      if (img && usable(img)) show(img);
-      else if (target) {
-        clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => hide(false), 250);
+      pending = { x: e.clientX, y: e.clientY, onButton: e.composedPath().includes(host) };
+      const wait = 60 - (performance.now() - lastMove);
+      if (wait <= 0) {
+        clearTimeout(trailing);
+        trailing = 0;
+        look(pending);
+        pending = null;
+      } else if (!trailing) {
+        trailing = setTimeout(() => {
+          trailing = 0;
+          if (pending && enabled && panel.style.display !== 'flex') look(pending);
+          pending = null;
+        }, wait);
       }
     },
     { passive: true, capture: true }
