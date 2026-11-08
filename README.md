@@ -1,8 +1,148 @@
-# ZBoard
+<p align="center">
+  <img src="docs/screenshots/cover.jpg" alt="ZBoard on a desktop browser and a phone" width="900">
+</p>
 
-A self-hosted, Milanote-style canvas for notes, to-dos, images, links, nested boards and columns.
-One Node process with SQLite, a web app that also installs on a phone, a browser extension that saves
-things from any page, and a terminal client.
+<h1 align="center">ZBoard</h1>
+
+<p align="center">
+  <b>Your own visual board for pictures, notes and links.</b><br>
+  A self-hosted, Milanote-style canvas that runs on your PC and follows you to your phone and tablet.
+</p>
+
+<p align="center">
+  <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-yes-2ea44f">
+  <img alt="Node 22.13+" src="https://img.shields.io/badge/node-22.13%2B-339933?logo=node.js&logoColor=white">
+  <img alt="SQLite" src="https://img.shields.io/badge/storage-SQLite-003B57?logo=sqlite&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/web-React%2018-61DAFB?logo=react&logoColor=black">
+  <img alt="Installable app" src="https://img.shields.io/badge/phone-installable%20app-5A0FC8">
+  <img alt="Chrome and Edge extension" src="https://img.shields.io/badge/clipper-Chrome%20%7C%20Edge-4285F4?logo=googlechrome&logoColor=white">
+</p>
+
+<p align="center">
+  <a href="#-a-quick-tour">Tour</a> ·
+  <a href="#-quick-start">Quick start</a> ·
+  <a href="#-how-it-fits-together">How it works</a> ·
+  <a href="#setup-on-windows-wsl2">Setup</a> ·
+  <a href="#env-reference">.env</a> ·
+  <a href="#phone-and-other-devices">Phone</a> ·
+  <a href="#browser-extension">Extension</a> ·
+  <a href="#cli">CLI</a> ·
+  <a href="#backup-and-restore">Backups</a> ·
+  <a href="#gotchas">Gotchas</a>
+</p>
+
+---
+
+## ✨ Why ZBoard
+
+<table>
+  <tr><td width="34%">🖼️ <b>Boards full of pictures</b></td><td>Drop in images, notes, to-dos, links, colours and drawings, then arrange them freely. Boards go inside boards, as deep as you like.</td></tr>
+  <tr><td>📱 <b>On every screen</b></td><td>The same boards on your PC, phone and tablet, kept in sync live. On a phone it installs like an app, with touch gestures and a camera button.</td></tr>
+  <tr><td>🧩 <b>Save from anywhere</b></td><td>The <b>ZBoard Clipper</b> extension puts a Save button on every picture on the web, and you pick the board right there.</td></tr>
+  <tr><td>🔒 <b>Yours, at home</b></td><td>One Node process with SQLite on your own machine. No account, no cloud service, nothing shared.</td></tr>
+  <tr><td>☁️ <b>Backed up properly</b></td><td>Daily backups to this PC and then your own Google Drive (encrypted if you want), plus zip export of any board.</td></tr>
+  <tr><td>⚡ <b>Fast with thousands of cards</b></td><td>A 1,680-picture board still pans and zooms smoothly.</td></tr>
+</table>
+
+## 👀 A quick tour
+
+### Your boards, at a glance
+Each board gets an icon or emoji cover and shows how many cards it holds. Click one to go inside.
+
+<img src="docs/screenshots/desktop-home.jpg" alt="The Home board with board covers: Effect Painting, Paint Skin, Gundam, Non Metallic Metal, Nurgles and Orc, Goblin, Troll" width="100%">
+
+### A canvas for everything
+Pictures, columns, YouTube links that play in place, colour swatches and notes, laid out however you think.
+
+<img src="docs/screenshots/desktop-board.jpg" alt="A board with a column of reference photos, painted miniatures, a YouTube link and a colour card" width="100%">
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/desktop-gundam.jpg" alt="A Gundam reference board with a grid of photos and step-by-step guides"></td>
+    <td width="50%"><img src="docs/screenshots/desktop-big-board.jpg" alt="A test board with 1,680 pictures, zoomed out"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Reference photos and guides, side by side</sub></td>
+    <td align="center"><sub>1,680 pictures on one board, still smooth</sub></td>
+  </tr>
+</table>
+
+### Tools that follow your selection
+Select a card and the toolbar switches to what you can do with it: draw on a picture, crop and rotate, caption, colour, labels and more. Click empty board (or **Done**) to switch back.
+
+<img src="docs/screenshots/desktop-actions.jpg" alt="An image card selected; the left toolbar shows Done, Draw on, Edit, Caption, Color, Labels and More" width="100%">
+
+### Find anything with Ctrl+K
+Search looks through every board, note, link and to-do, ignores accents, and understands `#tags` and labels.
+
+<img src="docs/screenshots/desktop-search.jpg" alt="Search for 'skin' listing a board, a note, a to-do and several YouTube links, with matches highlighted" width="100%">
+
+### Phone and tablet
+Install it to your home screen and it opens like an app. One finger pans, two fingers zoom, hold a card to pick it up, and the camera button adds a photo straight to the board.
+
+<table>
+  <tr>
+    <td width="27%"><img src="docs/screenshots/phone-home.jpg" alt="ZBoard Home on a phone"></td>
+    <td width="27%"><img src="docs/screenshots/phone-board.jpg" alt="A board on a phone, with the bottom toolbar"></td>
+    <td width="46%"><img src="docs/screenshots/tablet-home.jpg" alt="ZBoard Home on an iPad"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Phone: Home</sub></td>
+    <td align="center"><sub>Phone: a board</sub></td>
+    <td align="center"><sub>iPad</sub></td>
+  </tr>
+</table>
+
+### Save from any web page
+With **ZBoard Clipper**, hover a picture and click **Save** in its corner. Pick a board (type to search, Enter to save); the board you used last is at the top. Saved things wait in the board's **Saved items** panel until you drag them onto the canvas.
+
+<img src="docs/screenshots/clipper-picker.jpg" alt="The Clipper's board picker open over a picture on a web gallery" width="100%">
+
+### Backups you can trust
+Backups go to this PC first and then Google Drive. Pictures nothing uses any more are cleaned up only when every kept backup is newer, and the confirmation says exactly what goes and that it can't be undone.
+
+<p align="center">
+  <img src="docs/screenshots/cleanup-confirm.png" alt="Confirmation: Permanently remove 129 unused pictures, 52.2 MB, with previews and where they are deleted from" width="560">
+</p>
+
+## 🚀 Quick start
+
+```bash
+git clone <your repo> ~/zboard && cd ~/zboard
+./start.sh            # first run creates .env: set APP_PASSWORD in it, then run again
+```
+
+Open <http://localhost:3000> and log in. That's it. For your phone, see [Tailscale](#tailscale-https-and-access-from-anywhere);
+for the browser extension, see [Browser extension](#browser-extension).
+
+## 🧭 How it fits together
+
+```mermaid
+flowchart LR
+  subgraph Devices
+    PC["💻 Browser on the PC"]
+    Phone["📱 Phone / tablet app"]
+    Ext["🧩 ZBoard Clipper"]
+    CLI["⌨️ zboard CLI"]
+  end
+  subgraph Home["🏠 Your PC (WSL2 or Linux)"]
+    Server["ZBoard server<br/>Node 22 + Express"]
+    DB[("SQLite<br/>boards and cards")]
+    Files[("Pictures and files<br/>+ previews")]
+    Local[("Local backups")]
+  end
+  Drive[("☁️ Your Google Drive<br/>ZBoard Backup")]
+  PC -- localhost:3000 --> Server
+  Phone -- "Tailscale HTTPS" --> Server
+  Ext -- "token" --> Server
+  CLI -- "token" --> Server
+  Server --> DB
+  Server --> Files
+  Server -- "every N days" --> Local
+  Local -- "then, encrypted" --> Drive
+```
+
+## 🧰 Everything it can do
 
 - **Canvas**: notes, to-dos, images, links (YouTube plays in place), boards with icon covers, columns,
   drawings, styled arrows, colours, undo, live sync between devices.
@@ -23,18 +163,18 @@ things from any page, and a terminal client.
   Saved strokes become a drawing card where you drew them; double-click it to draw on it again. Keys in
   drawing mode: P pen, V select, E eraser, Delete removes selected strokes, Ctrl+S saves. Wheel and
   trackpad still pan and zoom.
-- **Phone**: touch gestures, camera button, installs from the home screen (PWA).
+- **Phone**: touch gestures, camera button, installs from the home screen (PWA). Pictures show the card's
+  colour while they load and retry by themselves on a weak connection; previews you've seen are kept on the
+  device.
 - **Find**: Ctrl+K search (accent-insensitive) and #tags.
 - **Keep**: a full backup every few days (you choose, default daily) to a local folder and then Google Drive,
   Google Drive copies minutes after edits, zip export of any board.
 - **Clip**: ZBoard Clipper for Chrome/Edge saves images, links and text into a board's Saved items.
 - **Terminal**: `zboard` CLI, with images drawn inline over SSH.
 
-Contents: [Setup on Windows (WSL2)](#setup-on-windows-wsl2) · [.env](#env-reference) ·
-[Phone and other devices](#phone-and-other-devices) · [Tailscale](#tailscale-https-and-access-from-anywhere) ·
-[Browser extension](#browser-extension) · [CLI](#cli) · [Google Drive](#google-drive-backup-one-time-setup) ·
-[Backup and restore](#backup-and-restore) · [Docker](#docker) · [Linux mini PC](#moving-to-the-linux-mini-pc) ·
-[Development](#development) · [Gotchas](#gotchas)
+---
+
+# 📖 Documentation
 
 ## Setup on Windows (WSL2)
 
@@ -103,17 +243,23 @@ extension and the CLI is shown (and can be replaced) in **Menu → Browser exten
   Then allow it through the firewall on private networks:
   `New-NetFirewallRule -DisplayName ZBoard -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -Profile Private`.
 - **Install as an app and use the camera**: browsers only allow this over HTTPS, so use Tailscale (next section),
-  open the `https://….ts.net` address, sign in, then *Add to Home screen* (Android: *Install app*).
+  open the `https://….ts.net` address, sign in, then *Share → Add to Home Screen* (iPhone, in Safari, Chrome or
+  Edge) or *Install app* (Android).
 - Touch: one finger pans, two fingers zoom, hold a card to pick it up, double-tap to open or edit, hold empty
-  space for the add menu.
+  space for the add menu. In **Saved items**, hold an item and drag it onto the board.
 
 ## Tailscale: HTTPS and access from anywhere
 
 1. Install Tailscale on Windows and on the phone, sign in to the same account.
 2. In the Tailscale admin console, enable **MagicDNS** and **HTTPS certificates**.
-3. On Windows (with ZBoard running): `tailscale serve --bg 3000`.
+3. On Windows (with ZBoard running): `tailscale serve --bg 3000`. From a WSL terminal that is
+   `"/mnt/c/Program Files/Tailscale/tailscale.exe" serve --bg 3000`.
    ZBoard is now at `https://<pc-name>.<tailnet>.ts.net` for your devices only.
 4. On the phone (even on mobile data): open that address, log in, install to the home screen.
+
+After renaming the PC or the tailnet in the admin console, run `tailscale serve reset` and
+`tailscale serve --bg 3000` again, and open the new address once on the PC so the certificate is issued
+(about 30–40 seconds) before the phone uses it.
 
 **Remote shell for the CLI**: Tailscale's SSH server isn't available on Windows. Use Windows' own
 OpenSSH Server (Settings → System → Optional features → OpenSSH Server, then `wsl` after connecting), or run
@@ -129,9 +275,13 @@ OpenSSH Server (Settings → System → Optional features → OpenSSH Server, th
 
 Then hover any image and click the **Save** button in its corner: pick a board (type to search, Enter saves;
 the last board used is at the top). Or right-click an image, link, selection or page → **Save to ZBoard** →
-your default board or any board in the tree. The hover button can be switched off in the popup. The popup can save the page link or pick several images at once. Saved things wait in the board's
-**Saved items** panel (inbox icon in the top bar); drag them onto the canvas.
+your default board or any board in the tree. The hover button can be switched off in the popup. The popup can
+save the page link or pick several images at once. Saved things wait in the board's **Saved items** panel
+(inbox icon in the top bar); drag them onto the canvas.
 If you press **New token**, the extension says so and asks you to reconnect.
+
+After updating the extension's files, press ↻ on its card in `chrome://extensions` (Chrome loads it from the
+folder you picked in step 2, so update that folder).
 
 ## CLI
 
@@ -177,7 +327,7 @@ It only uses the `drive.file` scope: it can see the files it created (the `ZBoar
 5. **APIs & Services → Credentials → Create credentials → OAuth client ID**, application type
    **TVs and Limited Input devices**. Copy the client ID and secret.
 6. Put them in `.env` (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, optional `GOOGLE_BACKUP_PASSPHRASE`) and restart.
-7. In ZBoard open **Menu → Google Drive → Connect Google Drive**. Open the address shown
+7. In ZBoard open **Menu → Backup & Restore → Connect Google Drive**. Open the address shown
    (google.com/device) on any device, enter the code and approve.
 
 What happens then:
@@ -245,9 +395,11 @@ Checks:
 
 - `cd server && npm test`: API checks with curl on a throwaway data dir (port 3999).
 - `e2e/`: headless browser checks with an installed Edge (`npm install` in `e2e/`, run from Windows),
-  against a server started with `APP_PASSWORD=testpw` and an empty data dir: `node e2e/step2.mjs` … `step7.mjs`;
+  against a server started with `APP_PASSWORD=testpw` and an empty data dir: `node e2e/step2.mjs` … `step23.mjs`;
   `step4` also needs `e2e/mock-google.mjs`. `bash e2e/step8.sh` checks the CLI.
 - `./stress-test.sh 1000` makes a 1000-image board from your uploaded images; `./stress-test.sh --cleanup` removes it.
+
+The screenshots in this README live in `docs/screenshots/`.
 
 ## Gotchas
 
@@ -261,5 +413,5 @@ Checks:
   **Most Compatible** (JPEG), or convert first.
 - Google Drive stops after 7 days if the OAuth app is left in *Testing*: publish it.
 - After **New token**, reconnect the extension and run `zboard login` (or rely on the token file).
-- The phone app updates itself: a new build is picked up on the next load.
+- The phone app updates itself: a new build is picked up on the next load (close and reopen the home-screen app).
 - `node:sqlite` needs Node 22.13+. Never install `better-sqlite3`.
