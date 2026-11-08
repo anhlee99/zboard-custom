@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/screenshots/cover.jpg" alt="ZBoard on a desktop browser and a phone" width="900">
+  <a href="https://endiluong.github.io/zboard/"><img alt="Try the live demo: no sign-up, nothing to install" src="https://img.shields.io/badge/%E2%96%B6%20Try%20the%20live%20demo-no%20sign--up%20%C2%B7%20nothing%20to%20install-ff4d8d?style=for-the-badge&labelColor=23221f"></a>
+</p>
+
+<p align="center">
+  <a href="https://endiluong.github.io/zboard/"><img src="docs/screenshots/cover.jpg" alt="ZBoard on a desktop browser and a phone. Click to try the live demo" width="900"></a>
 </p>
 
 <h1 align="center">ZBoard</h1>
@@ -16,6 +20,11 @@
   <img alt="React" src="https://img.shields.io/badge/web-React%2018-61DAFB?logo=react&logoColor=black">
   <img alt="Installable app" src="https://img.shields.io/badge/phone-installable%20app-5A0FC8">
   <img alt="Chrome and Edge extension" src="https://img.shields.io/badge/clipper-Chrome%20%7C%20Edge-4285F4?logo=googlechrome&logoColor=white">
+</p>
+
+<p align="center">
+  <a href="https://endiluong.github.io/zboard/"><b>▶ Open the demo in your browser</b></a><br>
+  <sub>It starts with an empty board, and everything you make stays in your own browser.</sub>
 </p>
 
 <p align="center">
@@ -402,8 +411,13 @@ Checks:
 
 - `cd server && npm test`: API checks with curl on a throwaway data dir (port 3999).
 - `e2e/`: headless browser checks with an installed Edge (`npm install` in `e2e/`, run from Windows),
-  against a server started with `APP_PASSWORD=testpw` and an empty data dir: `node e2e/step2.mjs` … `step23.mjs`;
+  against a server started with `APP_PASSWORD=testpw` and an empty data dir: `node e2e/step2.mjs` … `step26.mjs`;
   `step4` also needs `e2e/mock-google.mjs`. `bash e2e/step8.sh` checks the CLI.
+- **Online demo** (`web/demo/`): `node demo/build.mjs` (in `web/`) builds the app into `web/dist-demo` with
+  `server/src/db.js` running in a service worker on SQLite compiled to WebAssembly. Each visitor's boards and
+  pictures stay in their own browser (IndexedDB). `node demo/test.mjs` checks that in-browser server, and
+  `node e2e/step27-demo.mjs` checks the built demo in a browser. `.github/workflows/pages.yml` publishes it to
+  GitHub Pages on every push to `main`.
 - `./stress-test.sh 1000` makes a 1000-image board from your uploaded images; `./stress-test.sh --cleanup` removes it.
 
 The screenshots in this README live in `docs/screenshots/`.

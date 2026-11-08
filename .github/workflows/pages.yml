@@ -1,0 +1,51 @@
+# Publishes the online demo (web/dist-demo, built by web/demo/build.mjs) to GitHub Pages:
+# https://endiluong.github.io/zboard/ . The demo runs the server's data layer in the visitor's
+# browser, so every visitor starts with an empty board of their own and nothing is stored here.
+name: Demo on GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', 'server/src/db.js', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - name: Check the in-browser server
+        run: node demo/test.mjs
+        working-directory: web
+      - name: Build the demo
+        run: node demo/build.mjs /${{ github.event.repository.name }}/
+        working-directory: web
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist-demo
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
