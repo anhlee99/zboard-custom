@@ -2911,9 +2911,9 @@ kbd {
 }
 
 /* ---------- colour cards ---------- */
-.card-color {
-  overflow: hidden;
-}
+/* No overflow: hidden on the card: it cut the selection handles (centred on its corners on touch
+   screens, the arrow dot past its right edge) down to blue quarter-circles. The swatch rounds its own
+   top corners and long names wrap. */
 .color-swatch {
   height: 120px;
   padding: 14px 16px;
@@ -2928,6 +2928,7 @@ kbd {
   padding: 12px 16px 14px;
   font-size: 13px;
   color: var(--ink-2);
+  overflow-wrap: anywhere;
 }
 .color-edit {
   padding: 10px 12px 12px;
