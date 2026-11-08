@@ -245,6 +245,7 @@ export function createStore(file) {
   const fileCols = db.prepare('PRAGMA table_info(files)').all().map((c) => c.name);
   if (!fileCols.includes('alpha')) db.exec('ALTER TABLE files ADD COLUMN alpha INTEGER');
   if (!fileCols.includes('color')) db.exec('ALTER TABLE files ADD COLUMN color TEXT');
+  if (!fileCols.includes('unused_since')) db.exec('ALTER TABLE files ADD COLUMN unused_since INTEGER'); // see cleanup.js
   const now = () => Date.now();
 
   if (!db.prepare('SELECT 1 FROM boards WHERE id = ?').get('root')) {
@@ -380,6 +381,29 @@ export function createStore(file) {
   const listLabels = () =>
     db.prepare("SELECT j.value AS label, COUNT(*) AS count FROM cards, json_each(cards.data, '$.labels') AS j GROUP BY j.value ORDER BY count DESC, j.value COLLATE NOCASE LIMIT 300").all();
   const listTags = () => db.prepare('SELECT tag, COUNT(*) AS count FROM card_tags GROUP BY tag ORDER BY count DESC, tag LIMIT 300').all();
+
+  // ---- unused files (cleanup.js) ----
+  // A file is in use while any card, saved item or board mentions its id anywhere in its data
+  // (fileId, link preview image, ...). Starts the clock on files that just became unused, stops it
+  // on files used again (undo, restore), and returns every unused file with its clock.
+  const sweepUnused = db.transaction((now) => {
+    const ids = new Set(db.prepare('SELECT id FROM files').all().map((r) => r.id));
+    const used = new Set();
+    const walk = (v) => {
+      if (typeof v === 'string') ids.has(v) && used.add(v);
+      else if (v && typeof v === 'object') for (const x of Object.values(v)) walk(x);
+    };
+    for (const t of ['cards', 'clips', 'boards']) for (const r of db.prepare(`SELECT data FROM ${t}`).all()) walk(JSON.parse(r.data || '{}'));
+    const start = db.prepare('UPDATE files SET unused_since = ? WHERE id = ? AND unused_since IS NULL');
+    const stop = db.prepare('UPDATE files SET unused_since = NULL WHERE id = ? AND unused_since IS NOT NULL');
+    for (const id of ids) used.has(id) ? stop.run(id) : start.run(now, id);
+    return db.prepare('SELECT f.*, d.drive_id FROM files f LEFT JOIN drive_files d ON d.local_id = f.id WHERE f.unused_since IS NOT NULL ORDER BY f.unused_since').all();
+  });
+  const unusedSummary = () => db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes, MIN(unused_since) AS oldest FROM files WHERE unused_since IS NOT NULL').get();
+  const forgetFile = db.transaction((id) => {
+    db.prepare('DELETE FROM drive_files WHERE local_id = ?').run(id);
+    db.prepare('DELETE FROM files WHERE id = ?').run(id);
+  });
 
   function stats() {
     const count = (t) => db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n;
@@ -762,6 +786,9 @@ export function createStore(file) {
     markOnDrive: (localId, driveId) =>
       db.prepare('INSERT OR REPLACE INTO drive_files (local_id, drive_id, uploaded_at) VALUES (?, ?, ?)').run(localId, driveId, Date.now()),
     clearDriveFiles: () => db.exec('DELETE FROM drive_files'),
+    sweepUnused,
+    unusedSummary,
+    forgetFile,
     search,
     byTag,
     listTags,

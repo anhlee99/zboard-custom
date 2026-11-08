@@ -39,6 +39,9 @@ export function createLocalBackups({ getStore, dataDir, backupDir, keep, log }) 
 
   function run() {
     if (running) return running;
+    // `running` is cleared in .finally, which always runs after this assignment. (A try/finally inside
+    // the async function did not: with no new files it finished before the assignment, left `running`
+    // set to the finished promise, and every later backup, nightly ones too, returned the old result.)
     running = (async () => {
       const started = Date.now();
       try {
@@ -69,10 +72,10 @@ export function createLocalBackups({ getStore, dataDir, backupDir, keep, log }) 
         getStore().setMeta('backup_status', JSON.stringify({ ok: false, at: Date.now(), error: e.message }));
         log('Backup failed: ' + e.message);
         throw e;
-      } finally {
-        running = null;
       }
-    })();
+    })().finally(() => {
+      running = null;
+    });
     return running;
   }
 
@@ -386,5 +389,24 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
     return { snapshot: latest.name, files_fetched: fetched, files_missing: missing };
   }
 
-  return { status, connect, disconnect, sync, markDirty, restore };
+  // For the unused-file cleanup: the snapshots kept in Drive (oldest first), one of them decrypted
+  // (a SQLite database), and removing one picture's copy (already gone counts as removed).
+  async function keptSnapshots() {
+    const f = await folders();
+    return listAll(`${qstr(f.snapshots)} in parents and trashed = false`, 'createdTime');
+  }
+  const readSnapshot = async (id) => decrypt(await download(id));
+  async function oldestSnapshotAt() {
+    const [first] = await keptSnapshots();
+    return first ? Date.parse(first.createdTime) : null;
+  }
+  async function removeFile(driveId) {
+    try {
+      await api('DELETE', `/drive/v3/files/${driveId}`);
+    } catch (e) {
+      if (!/ 404 /.test(e.message)) throw e;
+    }
+  }
+
+  return { status, connect, disconnect, sync, markDirty, restore, connected, oldestSnapshotAt, keptSnapshots, readSnapshot, removeFile };
 }
