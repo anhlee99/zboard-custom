@@ -983,9 +983,15 @@ input {
     bottom: auto;
     top: calc(100% + 8px);
   }
-  .topbar-right [data-tip]:hover::after {
+  .topbar-right [data-tip]:hover::after,
+  .menu-buttons [data-tip]:last-child:hover::after {
     left: auto;
     right: 0;
+    transform: none;
+  }
+  /* The first button of a row: left-aligned, so its tip stays inside the Menu too. */
+  .menu-buttons [data-tip]:first-child:hover::after {
+    left: 0;
     transform: none;
   }
   .toolbar [data-tip]:hover::after {
@@ -1280,7 +1286,8 @@ kbd {
 .menu-panel {
   width: min(360px, 100%);
   max-height: calc(100vh - var(--topbar-h) - 20px);
-  overflow: auto;
+  overflow-x: hidden; /* never a sideways scrollbar (e.g. from a tooltip near the edge) */
+  overflow-y: auto;
   background: var(--panel);
   border-radius: 12px;
   box-shadow: var(--shadow-lift);
