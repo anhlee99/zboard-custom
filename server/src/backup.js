@@ -91,7 +91,7 @@ const qstr = (s) => `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
 export function createDrive({ getStore, dataDir, clientId, clientSecret, passphrase, debounceMs = 90_000, keep = 30, log, onRestore, paused = () => false }) {
   // While the unused-file cleanup removes pictures (cleanup.js), Drive is left to it: Back up now,
   // Restore and Disconnect are refused, and an automatic backup waits until it has finished.
-  const PAUSED = 'Google Drive is busy while unused pictures are being removed. Try again when that has finished.';
+  const PAUSED = 'Google Drive is busy while unused files are being removed. Try again when that has finished.';
   const assertNotPaused = () => {
     if (paused()) throw new HttpError(409, PAUSED);
   };

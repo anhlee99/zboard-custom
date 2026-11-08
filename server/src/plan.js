@@ -57,7 +57,7 @@ export function createBackupPlan({ getStore, local, drive, log, dayMs = 24 * 360
         out.local = { ok: false, error: e.message };
       }
       if (drive.connected()) {
-        if (drive.status().paused) out.drive = { ok: false, skipped: 'paused while unused pictures are removed; it goes up with the next backup' };
+        if (drive.status().paused) out.drive = { ok: false, skipped: 'paused while unused files are removed; it goes up with the next backup' };
         else {
           try {
             await drive.idle(); // a backup after edits may be uploading

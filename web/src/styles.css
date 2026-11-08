@@ -1383,6 +1383,20 @@ kbd {
   border-radius: 6px;
   background: var(--line);
 }
+/* A file that isn't a picture (PDF, ZIP…): a tile with its type */
+.confirm-file {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  background: var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+}
 .confirm-more {
   display: flex;
   align-items: center;
@@ -1477,6 +1491,24 @@ kbd {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+/* Backup & Restore: Back up now, Restore and Disconnect share one row */
+.menu-buttons.one-row {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.menu-buttons.one-row button {
+  flex: 1 1 auto;
+  padding-left: 8px;
+  padding-right: 8px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.drive-logo {
+  flex: none;
 }
 .menu-buttons button,
 .menu-buttons .button {

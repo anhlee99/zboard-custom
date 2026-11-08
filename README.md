@@ -85,7 +85,7 @@ from sleeping while plugged in: `powercfg /change standby-timeout-ac 0`. (On nat
 | `BACKUP_DIR` | `./backup` | Where local backups go. Put it on a second disk. |
 | `BACKUP_KEEP` | `14` | Local snapshots to keep. |
 | `BACKUP_AUTO` | – | `off` stops the automatic full backup (only **Back up now** then). How often it runs is set in **Menu → Backup & Restore**. `BACKUP_CRON` is no longer used. |
-| `CLEANUP_CRON` | `0 4 1 * *` | When unused pictures are checked (1st of each month, 04:00). A run missed while ZBoard was off happens at the next start. `off` disables it. |
+| `CLEANUP_CRON` | `0 4 1 * *` | When unused files are checked (1st of each month, 04:00). A run missed while ZBoard was off happens at the next start. `off` disables it. |
 | `CLEANUP_AFTER_DAYS` | `30` | A picture no card or saved item uses is removed (original, previews, local backup copy, Drive copy) once unused this long **and** older than every kept backup. |
 | `MAX_UPLOAD_MB` | `50` | Largest upload. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | – | Google Drive backup, see below. |
@@ -207,10 +207,10 @@ What happens then:
 
   Thumbnails are rebuilt on start-up.
 - **Restore from Google Drive**: see above.
-- **Unused pictures**: deleting a card keeps its picture (undo and older backups may need it). A monthly
-  check (`CLEANUP_CRON`) removes a picture everywhere (original, previews, local backup, Google Drive) once
+- **Unused files**: deleting a card keeps its picture or file (undo and older backups may need it). A monthly
+  check (`CLEANUP_CRON`) removes it everywhere (original, previews, local backup, Google Drive) once
   nothing has used it for `CLEANUP_AFTER_DAYS` and every kept backup is newer than that, so a backup you can
-  still restore never misses a picture. **Menu → Backup & Restore → Unused pictures** shows what is waiting, runs the check now, and **Clean up now…** removes them at once after reading every kept backup.
+  still restore never misses a file. **Menu → Backup & Restore → Unused files** shows what is waiting, runs the check now, and **Clean up now…** removes them at once after reading every kept backup.
 - **Export**: Menu → Export gives a zip of a board (or everything) with a `board.json` and the original files.
 
 ## Docker

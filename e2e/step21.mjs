@@ -15,7 +15,7 @@ const text = async () => (await section.innerText()).replace(/\s+/g, ' ');
 await section.locator('#backup-days').waitFor();
 
 check(/Google Drive not set up/.test(await text()), 'it says Google Drive is not set up', await text());
-check((await section.locator('.menu-sub h5').textContent()) === 'Unused pictures', 'the unused-pictures cleanup sits inside it');
+check((await section.locator('.menu-sub h5').textContent()) === 'Unused files', 'the unused-files cleanup sits inside it');
 check(/Back up every 1 day/.test(await text()) || (await section.locator('#backup-days').inputValue()) === '1', 'backs up every 1 day by default');
 
 // Back up now: this PC (no Drive here).
