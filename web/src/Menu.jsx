@@ -30,7 +30,8 @@ function DriveProgress({ p }) {
   );
 }
 
-function DriveSection() {
+// cleanupBusy: unused pictures are being removed (this tab started it); the server's `paused` covers other tabs.
+function DriveSection({ cleanupBusy }) {
   const [s, setS] = useState(null);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
@@ -38,15 +39,16 @@ function DriveSection() {
 
   useEffect(() => {
     refresh();
-  }, [refresh]);
-  // Poll while signing in or uploading (every second while uploading, for the progress bar).
+  }, [refresh, cleanupBusy]);
+  // Poll while signing in, uploading (every second, for the progress bar) or paused by the cleanup.
+  const paused = cleanupBusy || s?.paused;
   useEffect(() => {
     const uploading = s?.running || busy === 'sync';
-    const active = (s?.pending && !s.pending.error) || uploading;
+    const active = (s?.pending && !s.pending.error) || uploading || paused;
     if (!active) return;
     const t = setInterval(refresh, uploading ? 1000 : 2500);
     return () => clearInterval(t);
-  }, [s, busy, refresh]);
+  }, [s, busy, paused, refresh]);
 
   async function act(name, fn) {
     setBusy(name);
@@ -96,17 +98,18 @@ function DriveSection() {
             )}
           </dl>
           {s.running && <DriveProgress p={s.progress} />}
+          {paused && <div className="muted drive-paused">Paused while unused pictures are being removed. Back up, Restore and Disconnect come back when that has finished.</div>}
           <div className="menu-buttons">
-            <button disabled={!!busy || s.running} onClick={() => act('sync', () => api('POST', '/api/drive/sync'))}>
+            <button disabled={!!busy || s.running || paused} onClick={() => act('sync', () => api('POST', '/api/drive/sync'))}>
               {busy === 'sync' || s.running ? 'Backing up…' : 'Back up now'}
             </button>
             <button
-              disabled={!!busy}
+              disabled={!!busy || paused}
               onClick={() => window.confirm('Replace everything on this server with the newest Google Drive backup?') && act('restore', () => api('POST', '/api/drive/restore'))}
             >
               {busy === 'restore' ? 'Restoring…' : 'Restore'}
             </button>
-            <button disabled={!!busy} onClick={() => act('disconnect', () => api('POST', '/api/drive/disconnect'))}>
+            <button disabled={!!busy || paused} onClick={() => act('disconnect', () => api('POST', '/api/drive/disconnect'))}>
               Disconnect
             </button>
           </div>
@@ -126,18 +129,32 @@ function DriveSection() {
   );
 }
 
-// Copy that also works on plain-http LAN addresses, where navigator.clipboard is missing.
 // Pictures no card uses any more: how many wait, and when they go (see server/src/cleanup.js).
-function CleanupSection() {
+// A "Clean up now" removal runs on the server in the background; this shows its progress and result.
+function CleanupSection({ onBusy }) {
   const [s, setS] = useState(null);
   const [busy, setBusy] = useState(null); // 'check' | 'find' | null
   const [error, setError] = useState(null);
   const [found, setFound] = useState(null); // what "Clean up now" may remove, shown in the confirm window
   const [done, setDone] = useState(null);
+  const removing = useRef(false); // a removal this section started is running
   const refresh = useCallback(() => api('GET', '/api/cleanup').then(setS).catch((e) => setError(e.message)), []);
   useEffect(() => {
     refresh();
   }, [refresh]);
+  useEffect(() => {
+    onBusy?.(Boolean(s?.running));
+    if (!s?.running) return;
+    const t = setInterval(refresh, 1000);
+    return () => clearInterval(t);
+  }, [s?.running, onBusy, refresh]);
+  // The removal finished: say how it went.
+  useEffect(() => {
+    if (!removing.current || !s || s.running) return;
+    removing.current = false;
+    if (s.last_error) setError(`Stopped after removing ${s.last_removed}: ${s.last_error}`);
+    else setDone(`Removed ${s.last_removed} picture${s.last_removed === 1 ? '' : 's'} and freed ${formatBytes(s.last_freed)}.`);
+  }, [s]);
 
   async function runNow() {
     setBusy('check');
@@ -189,6 +206,7 @@ function CleanupSection() {
             Pictures no card uses any more. Each is removed everywhere (here, local backup, Google Drive) once unused for {s.after_days} days and older
             than every backup still kept, so restoring a backup never misses a picture.
           </div>
+          {s.job && <CleanupProgress job={s.job} />}
           <div className="menu-buttons">
             <button onClick={runNow} disabled={!!busy || s.running}>
               {busy === 'check' ? 'Checking…' : 'Check now'}
@@ -207,10 +225,10 @@ function CleanupSection() {
         <CleanupConfirm
           found={found}
           onClose={() => setFound(null)}
-          onRemoved={(r) => {
+          onStarted={(st) => {
+            removing.current = true;
             setFound(null);
-            setS(r);
-            setDone(`Removed ${r.removed} picture${r.removed === 1 ? '' : 's'} and freed ${formatBytes(r.freed)}.`);
+            setS(st);
           }}
         />
       )}
@@ -218,8 +236,24 @@ function CleanupSection() {
   );
 }
 
+function CleanupProgress({ job }) {
+  const removing = job.phase === 'removing';
+  const frac = removing && job.total ? job.removed / job.total : 0;
+  return (
+    <div className="drive-progress">
+      <div className="progress" role="progressbar" aria-label="Cleanup progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(frac * 100)}>
+        <div className={removing ? 'progress-fill' : 'progress-fill indeterminate'} style={removing ? { width: `${Math.max(2, frac * 100)}%` } : undefined} />
+      </div>
+      <div className="muted">
+        {removing ? `Removing ${job.removed} of ${job.total} · ${formatBytes(job.freed)} freed` : 'Checking backups once more…'} · you can keep working
+      </div>
+    </div>
+  );
+}
+
 // The confirm window for "Clean up now": what goes, from where, and that it can't be brought back.
-function CleanupConfirm({ found, onClose, onRemoved }) {
+// Remove only starts the removal (it runs in the background on the server), so the window closes at once.
+function CleanupConfirm({ found, onClose, onStarted }) {
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState(null);
   const cancelRef = useRef(null);
@@ -234,7 +268,7 @@ function CleanupConfirm({ found, onClose, onRemoved }) {
     setRemoving(true);
     setError(null);
     try {
-      onRemoved(await api('POST', '/api/cleanup/remove', { ids: found.files.map((f) => f.id) }));
+      onStarted(await api('POST', '/api/cleanup/remove', { ids: found.files.map((f) => f.id) }));
     } catch (e) {
       setError(e.message);
       setRemoving(false);
@@ -286,7 +320,7 @@ function CleanupConfirm({ found, onClose, onRemoved }) {
                 Cancel
               </button>
               <button className="danger-solid" onClick={remove} disabled={removing}>
-                {removing ? 'Removing…' : `Remove ${plural(n, 'picture', 'pictures')}`}
+                {removing ? 'Starting…' : `Remove ${plural(n, 'picture', 'pictures')}`}
               </button>
             </div>
           </>
@@ -310,6 +344,7 @@ function CleanupConfirm({ found, onClose, onRemoved }) {
   );
 }
 
+// Copy that also works on plain-http LAN addresses, where navigator.clipboard is missing.
 function copyText(text) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
   const t = document.createElement('textarea');
@@ -388,6 +423,7 @@ export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
   const [stats, setStats] = useState(null);
   const [backup, setBackup] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [cleanupBusy, setCleanupBusy] = useState(false); // pauses the Google Drive buttons
   const [error, setError] = useState(null);
 
   const load = useCallback(() => {
@@ -457,9 +493,9 @@ export default function Menu({ boardId, boardTitle, onClose, onLogout }) {
           {error && <div className="error-text">{error}</div>}
         </section>
 
-        <DriveSection />
+        <DriveSection cleanupBusy={cleanupBusy} />
 
-        <CleanupSection />
+        <CleanupSection onBusy={setCleanupBusy} />
 
         <ExtensionSection />
 

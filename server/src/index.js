@@ -701,6 +701,7 @@ async function replaceDatabase(tmp) {
   for (const [board] of streams) emit(board, 'reload', {}, null);
 }
 
+let cleanupBusy = () => false; // set once the cleanup exists
 const drive = createDrive({
   getStore: () => store,
   dataDir: DATA_DIR,
@@ -710,6 +711,7 @@ const drive = createDrive({
   debounceMs: Number(process.env.DRIVE_DEBOUNCE_MS) || 90_000,
   log,
   onRestore: replaceDatabase,
+  paused: () => cleanupBusy(), // Drive waits while unused pictures are removed (below)
 });
 
 app.get('/api/drive', (req, res) => res.json(drive.status()));
@@ -739,7 +741,9 @@ app.get('/api/cleanup', (req, res) => res.json({ ...cleanup.status(), cron: CLEA
 app.post('/api/cleanup', async (req, res) => res.json({ ...(await cleanup.run('manual')), cron: CLEANUP_CRON }));
 // "Clean up now": what is safe to remove right away (checks every kept backup), then remove what was confirmed.
 app.post('/api/cleanup/check', async (req, res) => res.json(await cleanup.check()));
-app.post('/api/cleanup/remove', async (req, res) => res.json({ ...(await cleanup.removeNow(req.body?.ids)), cron: CLEANUP_CRON }));
+// Starts the removal and answers at once (202): it runs in the background; GET /api/cleanup shows its progress.
+app.post('/api/cleanup/remove', (req, res) => res.status(202).json({ ...cleanup.startRemove(req.body?.ids), cron: CLEANUP_CRON }));
+cleanupBusy = cleanup.busy;
 
 if (CLEANUP_CRON !== 'off') {
   if (!cron.validate(CLEANUP_CRON)) {

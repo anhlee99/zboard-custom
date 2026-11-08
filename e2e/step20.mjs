@@ -47,6 +47,8 @@ check((await dialog.count()) === 0 && (await page.locator('.menu-panel').count()
 await section.locator('button', { hasText: 'Clean up now' }).click();
 await dialog.waitFor();
 await dialog.locator('button', { hasText: 'Remove 5 pictures' }).click();
+await dialog.waitFor({ state: 'detached', timeout: 2000 }).catch(() => {});
+check((await dialog.count()) === 0, 'Remove closes the window at once (the removal runs in the background)');
 await section.locator('.ok-text').waitFor();
 check(/Removed 5 pictures and freed/.test(await section.locator('.ok-text').textContent()) && (await files()) === 0, 'Remove deletes them and says so');
 check(await section.locator('button', { hasText: 'Clean up now' }).isDisabled(), 'with nothing left, the button is off');

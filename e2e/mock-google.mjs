@@ -105,6 +105,10 @@ http
       const m = p.match(/^\/drive\/v3\/files\/([^/]+)$/);
       if (m && files.has(m[1])) {
         if (req.method === 'DELETE') {
+          // MOCK_DELETE_MS slows removing a picture (not a snapshot), so checks can catch a cleanup mid-way.
+          const f = files.get(m[1]);
+          const inFiles = [...files.values()].some((x) => x.name === 'files' && f.parents.includes(x.id));
+          if (process.env.MOCK_DELETE_MS && inFiles) await new Promise((r) => setTimeout(r, Number(process.env.MOCK_DELETE_MS)));
           files.delete(m[1]);
           res.writeHead(204);
           return res.end();

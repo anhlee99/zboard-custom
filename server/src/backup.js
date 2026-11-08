@@ -88,7 +88,13 @@ const FOLDER = 'application/vnd.google-apps.folder';
 const MAGIC = Buffer.from('ZBE1');
 const qstr = (s) => `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 
-export function createDrive({ getStore, dataDir, clientId, clientSecret, passphrase, debounceMs = 90_000, keep = 30, log, onRestore }) {
+export function createDrive({ getStore, dataDir, clientId, clientSecret, passphrase, debounceMs = 90_000, keep = 30, log, onRestore, paused = () => false }) {
+  // While the unused-file cleanup removes pictures (cleanup.js), Drive is left to it: Back up now,
+  // Restore and Disconnect are refused, and an automatic backup waits until it has finished.
+  const PAUSED = 'Google Drive is busy while unused pictures are being removed. Try again when that has finished.';
+  const assertNotPaused = () => {
+    if (paused()) throw new HttpError(409, PAUSED);
+  };
   const oauthBase = process.env.GOOGLE_OAUTH_BASE || 'https://oauth2.googleapis.com';
   const apiBase = process.env.GOOGLE_API_BASE || 'https://www.googleapis.com';
   const configured = Boolean(clientId && clientSecret);
@@ -121,6 +127,7 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
       last_error: s.last_error ?? null,
       running: Boolean(running),
       progress: running ? progress : null,
+      paused: Boolean(paused()),
       dirty,
     };
   }
@@ -278,6 +285,12 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
 
   function sync(reason = 'manual') {
     if (!connected()) return Promise.reject(new HttpError(400, 'Google Drive is not connected'));
+    if (paused()) {
+      if (reason === 'manual') return Promise.reject(new HttpError(409, PAUSED));
+      dirty = true; // try again a little later
+      schedule(debounceMs);
+      return Promise.resolve(status());
+    }
     if (running) return running;
     if (reason !== 'manual' && getStore().stats().cards === 0) return Promise.resolve(status());
     running = (async () => {
@@ -348,6 +361,7 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
   }
 
   async function disconnect() {
+    assertNotPaused();
     pending = null;
     clearTimeout(timer);
     const refresh = getMeta('drive_refresh_token');
@@ -362,6 +376,7 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
 
   // Download the newest snapshot and every original it lists, then hand over to the server to swap databases.
   async function restore() {
+    assertNotPaused();
     if (running) await running.catch(() => {});
     const f = await folders();
     const snaps = await listAll(`${qstr(f.snapshots)} in parents and trashed = false`, 'createdTime desc');
@@ -408,5 +423,8 @@ export function createDrive({ getStore, dataDir, clientId, clientSecret, passphr
     }
   }
 
-  return { status, connect, disconnect, sync, markDirty, restore, connected, oldestSnapshotAt, keptSnapshots, readSnapshot, removeFile };
+  // Resolves once a backup already uploading has finished (the cleanup waits for it before starting).
+  const idle = () => (running ? running.then(() => {}, () => {}) : Promise.resolve());
+
+  return { status, connect, disconnect, sync, markDirty, restore, connected, idle, oldestSnapshotAt, keptSnapshots, readSnapshot, removeFile };
 }
