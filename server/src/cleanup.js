@@ -34,13 +34,15 @@ function mentionedIn(file, ids) {
 }
 
 export function createCleanup({ getStore, afterDays, localSnapshots, localDir, tmpDir, drive, pathsOf, log }) {
-  let running = null; // one check or removal at a time
+  let running = null; // one check or removal at a time (Google Drive actions are paused meanwhile)
+  let job = null; // a "Clean up now" removal running in the background: { phase, removed, total, freed }
   const state = () => JSON.parse(getStore().getMeta('cleanup_state') || '{}');
   const exclusive = (fn) => {
     if (running) throw new HttpError(409, 'A cleanup is already running. Try again in a moment.');
     running = fn().finally(() => (running = null));
     return running;
   };
+  const busy = () => Boolean(running);
 
   function status() {
     const s = state();
@@ -53,8 +55,10 @@ export function createCleanup({ getStore, afterDays, localSnapshots, localDir, t
       last_freed: s.last_freed ?? 0,
       last_waiting: s.last_waiting ?? 0,
       last_error: s.last_error ?? null,
+      last_reason: s.last_reason ?? null, // 'scheduled', 'catch-up', 'manual' or 'clean up now'
       oldest_backup: s.oldest_backup ?? null, // pictures unused since before this wait for it to rotate out
       running: Boolean(running),
+      job: running && job ? { phase: job.phase, removed: job.removed, total: job.total, freed: job.freed } : null,
     };
   }
 
@@ -79,7 +83,8 @@ export function createCleanup({ getStore, afterDays, localSnapshots, localDir, t
   }
 
   function record(reason, now, { removed = 0, freed = 0, waiting = 0, error = null, oldest_backup = null }) {
-    getStore().setMeta('cleanup_state', JSON.stringify({ last_run: now, last_removed: removed, last_freed: freed, last_waiting: waiting, last_error: error, oldest_backup }));
+    const s = { last_run: now, last_reason: reason, last_removed: removed, last_freed: freed, last_waiting: waiting, last_error: error, oldest_backup };
+    getStore().setMeta('cleanup_state', JSON.stringify(s));
     log(`Cleanup (${reason}): removed ${removed} unused file(s), ${waiting} waiting${error ? ' · ' + error : ''}`);
   }
 
@@ -100,6 +105,7 @@ export function createCleanup({ getStore, afterDays, localSnapshots, localDir, t
     const out = { removed: 0, freed: 0 };
     try {
       assertDriveReady();
+      await drive.idle(); // let a backup that is uploading finish first
       const oldest = await oldestBackupAt();
       out.oldest_backup = Number.isFinite(oldest) ? oldest : null;
       await remove(
@@ -119,6 +125,7 @@ export function createCleanup({ getStore, afterDays, localSnapshots, localDir, t
   // Unused pictures that no kept backup mentions, plus how many a backup still holds on to.
   async function findRemovable() {
     assertDriveReady();
+    await drive.idle(); // its snapshot list must not change while we read it
     const unused = getStore().sweepUnused(Date.now());
     const ids = new Set(unused.map((f) => f.id));
     const inBackups = new Set();
@@ -153,26 +160,28 @@ export function createCleanup({ getStore, afterDays, localSnapshots, localDir, t
       };
     });
 
-  // Removes the confirmed ids that are still removable now (checked again, in case something changed).
-  const removeNow = (ids) =>
+  // Starts removing the confirmed ids that are still removable (checked again, in case something
+  // changed) and returns at once: the removal runs in the background, its progress is in status().job
+  // and its result in last_* once done. Google Drive actions are paused until it finishes.
+  function startRemove(ids) {
+    const wanted = new Set(Array.isArray(ids) ? ids : []);
+    if (!wanted.size) throw new HttpError(400, 'Nothing selected to remove');
+    job = { phase: 'checking', removed: 0, total: wanted.size, freed: 0 };
+    const out = job;
     exclusive(async () => {
       const now = Date.now();
-      const wanted = new Set(Array.isArray(ids) ? ids : []);
-      const { removable } = await findRemovable();
-      const out = { removed: 0, freed: 0 };
       try {
-        await remove(
-          removable.filter((f) => wanted.has(f.id)),
-          out
-        );
+        const list = (await findRemovable()).removable.filter((f) => wanted.has(f.id));
+        Object.assign(out, { phase: 'removing', total: list.length });
+        await remove(list, out);
       } catch (e) {
         out.error = e.message;
       }
       out.waiting = getStore().unusedSummary().count;
       record('clean up now', now, out);
-      if (out.error) throw new HttpError(502, `Stopped after removing ${out.removed}: ${out.error}`);
-      return { removed: out.removed, freed: out.freed };
-    }).then((r) => ({ ...r, ...status() }));
+    }).catch(() => {});
+    return status();
+  }
 
   // At start-up: catch up on a monthly run that was missed while ZBoard was off.
   const due = (everyDays) => {
@@ -180,5 +189,5 @@ export function createCleanup({ getStore, afterDays, localSnapshots, localDir, t
     return !last || Date.now() - last > everyDays * DAY;
   };
 
-  return { status, run, check, removeNow, due };
+  return { status, run, check, startRemove, busy, due };
 }

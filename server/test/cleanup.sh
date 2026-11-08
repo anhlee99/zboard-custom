@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 D=$(mktemp -d)
 fuser -k 3200/tcp 4556/tcp 2>/dev/null || true
-MOCK_PORT=4556 node ../e2e/mock-google.mjs >$D/mock.log 2>&1 &
+MOCK_PORT=4556 MOCK_DELETE_MS=1500 node ../e2e/mock-google.mjs >$D/mock.log 2>&1 &
 MOCK=$!
 APP_PASSWORD=testpw PORT=3200 DATA_DIR=$D/data BACKUP_DIR=$D/bk BACKUP_KEEP=2 BACKUP_CRON=off \
   CLEANUP_CRON=off CLEANUP_AFTER_DAYS=0 \
@@ -81,8 +81,19 @@ for i in $(seq 1 30); do curl -s -X POST -H "$H" $B/api/drive/sync >/dev/null; d
 C=$(curl -s -X POST -H "$H" $B/api/cleanup/check)
 [ "$(echo "$C" | jq_ "d.files.some((f) => f.id === '$Df') + '/' + d.count + '/' + (d.bytes > 0)")" = "true/1/true" ] && ok "check: once that backup is replaced, it is offered for removal" || fail "check offer: $C"
 [ "$(gone $Df)" = 200 ] && ok "checking alone removes nothing" || fail "check removed"
-R=$(curl -s -H "$H" -H "$J" -d "{\"ids\":[\"$Df\",\"$A\"]}" $B/api/cleanup/remove)
-[ "$(echo "$R" | jq_ 'd.removed + "/" + (d.freed > 0)')" = "1/true" ] && ok "remove: the confirmed picture is removed (an in-use one in the list is ignored)" || fail "remove now: $R"
+code=$(curl -s -o $D/started -w '%{http_code}' -H "$H" -H "$J" -d "{\"ids\":[\"$Df\",\"$A\"]}" $B/api/cleanup/remove)
+[ "$code" = 202 ] && [ "$(jq_ 'd.running + "/" + !!d.job' <$D/started)" = "true/true" ] && ok "remove: answers at once (202) and runs in the background" || fail "remove start: $code $(cat $D/started)"
+# While it runs (the mock takes 1.5 s per picture removal), Google Drive actions wait.
+st() { curl -s -o /dev/null -w '%{http_code}' -X POST -H "$H" $B/api/drive/$1; }
+[ "$(st sync)/$(st restore)/$(st disconnect)" = "409/409/409" ] && ok "while it runs, Back up now, Restore and Disconnect are refused" || fail "drive not paused: $(st sync)"
+[ "$(curl -s -H "$H" $B/api/drive | jq_ 'd.paused')" = true ] && ok "and Drive status says paused" || fail "paused flag"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "$H" $B/api/cleanup/check)" = 409 ] && ok "a second cleanup can't start meanwhile" || fail "second cleanup"
+SEEN=$(for i in $(seq 1 60); do curl -s -H "$H" $B/api/cleanup | jq_ 'd.job ? d.job.phase : "done"'; sleep 0.25; done | uniq | tr '\n' ' ')
+echo "$SEEN" | grep -q "removing" && ok "progress is reported while it removes ($SEEN)" || fail "no progress: $SEEN"
+R=$(curl -s -H "$H" $B/api/cleanup)
+[ "$(echo "$R" | jq_ 'd.running + "/" + d.last_reason + "/" + d.last_removed + "/" + (d.last_freed > 0) + "/" + d.last_error')" = "false/clean up now/1/true/null" ] \
+  && ok "remove: the confirmed picture is removed (an in-use one in the list is ignored)" || fail "remove now: $R"
+[ "$(st sync)" = 200 ] && [ "$(curl -s -H "$H" $B/api/drive | jq_ 'd.paused')" = false ] && ok "afterwards Google Drive works again" || fail "drive after"
 [ "$(gone $Df)/$(onDrive $Df)/$(gone $A)/$(onDrive $A)" = "404/no/200/yes" ] && ok "remove: gone here and from Drive; the in-use picture untouched" || fail "remove effects"
 
 # A picture on Drive is kept while Drive is disconnected (its copy there couldn't be removed).

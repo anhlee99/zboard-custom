@@ -1403,6 +1403,10 @@ kbd {
 .menu-buttons .danger-button {
   color: var(--danger);
 }
+.drive-paused {
+  font-size: 12px;
+  margin: 2px 0 8px;
+}
 .ok-text {
   color: #2f8a3e;
   font-size: 13px;
