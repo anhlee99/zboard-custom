@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/screenshots/cover.jpg" alt="ZBoard on a desktop browser and a phone" width="900">
+  <a href="https://endiluong.github.io/zboard/"><img alt="Try the live demo: no sign-up, nothing to install" src="https://img.shields.io/badge/%E2%96%B6%20Try%20the%20live%20demo-no%20sign--up%20%C2%B7%20nothing%20to%20install-ff4d8d?style=for-the-badge&labelColor=23221f"></a>
+</p>
+
+<p align="center">
+  <a href="https://endiluong.github.io/zboard/"><img src="docs/screenshots/cover.jpg" alt="ZBoard on a desktop browser and a phone. Click to try the live demo" width="900"></a>
 </p>
 
 <h1 align="center">ZBoard</h1>
@@ -19,8 +23,8 @@
 </p>
 
 <p align="center">
-  <a href="https://endiluong.github.io/zboard/"><b>▶ Try the demo in your browser</b></a><br>
-  <sub>No sign-up and nothing to install. Starts empty, and everything stays in your own browser.</sub>
+  <a href="https://endiluong.github.io/zboard/"><b>▶ Open the demo in your browser</b></a><br>
+  <sub>It starts with an empty board, and everything you make stays in your own browser.</sub>
 </p>
 
 <p align="center">
