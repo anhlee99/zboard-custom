@@ -117,25 +117,32 @@ for the browser extension, see [Browser extension](#browser-extension).
 
 ## 🧭 How it fits together
 
+Every device reaches ZBoard the same way: over your private Tailscale network, with HTTPS. The server runs on
+its own small machine at home (a mini PC, or WSL2 on a PC); nothing is exposed to the internet.
+
 ```mermaid
-flowchart LR
-  subgraph Devices
-    PC["💻 Browser on the PC"]
-    Phone["📱 Phone / tablet app"]
-    Ext["🧩 ZBoard Clipper"]
-    CLI["⌨️ zboard CLI"]
+flowchart TB
+  subgraph Devices["Your devices"]
+    direction LR
+    PC["💻 Computer<br/>browser"]
+    Phone["📱 Phone / tablet<br/>app"]
+    Ext["🧩 ZBoard<br/>Clipper"]
+    CLI["⌨️ zboard<br/>CLI"]
   end
-  subgraph Home["🏠 Your PC (WSL2 or Linux)"]
-    Server["ZBoard server<br/>Node 22 + Express"]
+  TS{{"🔐 Tailscale<br/>private network · HTTPS"}}
+  subgraph Home[" "]
+    direction LR
+    Server["🏠 <b>Home server</b> · mini PC or WSL2<br/>ZBoard: Node 22 + Express"]
     DB[("SQLite<br/>boards and cards")]
     Files[("Pictures and files<br/>+ previews")]
     Local[("Local backups")]
   end
   Drive[("☁️ Your Google Drive<br/>ZBoard Backup")]
-  PC -- localhost:3000 --> Server
-  Phone -- "Tailscale HTTPS" --> Server
-  Ext -- "token" --> Server
-  CLI -- "token" --> Server
+  PC --> TS
+  Phone --> TS
+  Ext -- "token" --> TS
+  CLI -- "token" --> TS
+  TS -- "https://zboard.your-tailnet.ts.net" --> Server
   Server --> DB
   Server --> Files
   Server -- "every N days" --> Local
