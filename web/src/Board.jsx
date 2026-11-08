@@ -2360,6 +2360,13 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
             const c = centerWorld();
             placeClip(id, { x: c.x - 120, y: c.y - 80 });
           }}
+          onDropAt={(id, cx, cy) => {
+            const el = document.elementFromPoint(cx, cy);
+            if (!el || !canvasRef.current?.contains(el)) return false;
+            const at = toWorld(cx, cy);
+            placeClip(id, { x: at.x - 40, y: at.y - 30 });
+            return true;
+          }}
           onDelete={deleteClip}
           onClose={onCloseSaved}
         />
