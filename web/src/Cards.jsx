@@ -16,6 +16,47 @@ const isHex = (c) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
 // lowRes is 'thumb' | 'mini' | 'micro' (older code passed true/false).
 const sizeName = (v) => (v === true ? 'mini' : v === false || !v ? 'thumb' : v);
 
+// A picture that never shows the browser's broken-image icon. Until it has loaded it is invisible, so the
+// card's own colour (and a soft shimmer, see styles.css) shows instead. A request that drops (a weak
+// mobile signal) is tried again after 1, 3 and 10 s, then whenever the connection comes back or the app
+// is opened again. Switching src (zooming swaps thumb ↔ mini) keeps the loaded picture visible.
+const RETRY_MS = [1000, 3000, 10000];
+export function SafeImg({ src, ...rest }) {
+  const [st, setSt] = useState({ src, tries: 0, status: 'loading' });
+  if (st.src !== src) setSt((p) => ({ src, tries: 0, status: p.status === 'loaded' ? 'loaded' : 'loading' }));
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el?.complete && el.naturalWidth > 0) setSt((p) => (p.status === 'loaded' ? p : { ...p, status: 'loaded' }));
+  }, []);
+  useEffect(() => {
+    if (st.status !== 'failed') return;
+    const again = () => setSt((p) => (p.status === 'failed' ? { ...p, tries: p.tries + 1, status: 'retry' } : p));
+    if (st.tries < RETRY_MS.length) {
+      const t = setTimeout(again, RETRY_MS[st.tries]);
+      return () => clearTimeout(t);
+    }
+    const onVisible = () => document.visibilityState === 'visible' && again();
+    addEventListener('online', again);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      removeEventListener('online', again);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [st.status, st.tries]);
+  const url = st.tries ? `${src}${src.includes('?') ? '&' : '?'}r=${st.tries}` : src;
+  return (
+    <img
+      ref={ref}
+      src={url}
+      data-img={st.status === 'loaded' ? 'loaded' : 'loading'}
+      onLoad={() => setSt((p) => (p.status === 'loaded' ? p : { ...p, status: 'loaded' }))}
+      onError={() => setSt((p) => ({ ...p, status: 'failed' }))}
+      {...rest}
+    />
+  );
+}
+
 function placeCaretAtEnd(el) {
   const range = document.createRange();
   range.selectNodeContents(el);
@@ -185,7 +226,7 @@ function ImageBody({ card, editing, selected, inColumn, file, actions, lowRes })
   const ratio = known ? `${c.w * rw} / ${c.h * rh}` : undefined;
   const src = fileId && `/files/${fileId}/${sizeName(lowRes)}`;
   const img = src && (
-    <img
+    <SafeImg
       src={src}
       alt={d.caption || d.alt || file?.name || ''}
       title={d.alt || undefined}
@@ -279,7 +320,7 @@ function LinkBody({ card, editing, actions, lowRes }) {
   if (video) return <VideoBody card={card} video={video} lowRes={lowRes} />;
   return (
     <div className="link-body">
-      {d.image && <img className="link-img" src={`/files/${d.image}/${sizeName(lowRes)}`} alt="" draggable={false} loading="lazy" decoding="async" />}
+      {d.image && <SafeImg className="link-img" src={`/files/${d.image}/${sizeName(lowRes)}`} alt="" draggable={false} loading="lazy" decoding="async" />}
       <div className="link-meta">
         <div className="link-title">{d.loading ? 'Fetching preview…' : d.title || d.url}</div>
         {d.description && <div className="link-desc">{d.description}</div>}
@@ -328,7 +369,7 @@ function VideoBody({ card, video, lowRes }) {
           />
         ) : (
           <>
-            <img src={thumb} alt="" draggable={false} loading="lazy" decoding="async" />
+            <SafeImg src={thumb} alt="" draggable={false} loading="lazy" decoding="async" />
             <button className="video-play" onClick={() => setPlaying(true)} aria-label="Play video" data-tip="Play here">
               <Icon name="play" size={22} />
             </button>
