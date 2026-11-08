@@ -24,6 +24,18 @@ const site = http
         <img id="tiny" src="/tiny.png" width="40" height="40" style="margin:40px">
         </body></html>`);
     }
+    if (u.pathname === '/picker') {
+      // A big picture behind everything (its corner off-screen), an opaque sticker panel on top whose
+      // stickers are CSS backgrounds (not <img>), and an ordinary picture.
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html><head><title>Picker</title></head><body style="margin:0;height:2000px">
+        <img id="wall" src="/large.png" style="position:fixed;left:-300px;top:-200px;width:1600px;height:1200px">
+        <div id="panel" style="position:fixed;right:20px;bottom:20px;width:300px;height:260px;background:#fff">
+          <div id="sticker" style="margin:20px;width:120px;height:120px;background:url(/small.png) center/cover"></div>
+        </div>
+        <img id="plain" src="/small.png" width="200" height="150" style="position:fixed;left:120px;top:140px">
+        </body></html>`);
+    }
     const sizes = { '/small.png': [400, 300], '/large.png': [1200, 900], '/tiny.png': [40, 40] };
     if (sizes[u.pathname]) {
       res.writeHead(200, { 'content-type': 'image/png' });
@@ -112,6 +124,51 @@ await sleep(300);
 await page.mouse.click(tiny.x + 12, tiny.y + 12);
 await sleep(800);
 check((await clips()).length === 2, 'Escape saves nothing, and small images have no button');
+
+// Which image, and where: the button belongs to the <img> actually under the pointer, 2 px inside its
+// visible top-left corner. Its shadow root is closed to the page, so the test reads the button's box
+// through the browser's debugging protocol (which sees closed shadow roots); null = not shown.
+const dbg = await page.context().newCDPSession(page);
+async function buttonBox() {
+  const { root } = await dbg.send('DOM.getDocument', { depth: -1, pierce: true });
+  let id = null;
+  const walk = (n, inside) => {
+    if (!n || id) return;
+    const here = inside || n.nodeName === 'ZBOARD-CLIPPER';
+    if (here && n.nodeName === 'BUTTON' && (n.attributes || []).includes('btn')) id = n.nodeId;
+    for (const c of [...(n.children || []), ...(n.shadowRoots || [])]) walk(c, here);
+  };
+  walk(root, false);
+  if (!id) return null;
+  try {
+    const { model } = await dbg.send('DOM.getBoxModel', { nodeId: id });
+    return { x: Math.round(model.border[0]), y: Math.round(model.border[1]) };
+  } catch {
+    return null; // display: none has no box
+  }
+}
+const hover = async (x, y) => {
+  await page.mouse.move(x, y, { steps: 4 });
+  await sleep(500); // leaving a picture hides its button after 250 ms (time to reach the button)
+};
+await page.goto(SITE + '/picker');
+await page.waitForFunction(() => [...document.images].every((i) => i.complete) && document.querySelector('zboard-clipper'));
+const sticker = await page.locator('#sticker').boundingBox();
+const plain = await page.locator('#plain').boundingBox();
+await hover(plain.x + 100, plain.y + 75);
+let at = await buttonBox();
+check(at?.x === plain.x + 2 && at?.y === plain.y + 2, 'an ordinary picture: the button sits exactly 2 px inside its top-left corner', JSON.stringify({ at, plain }));
+await hover(sticker.x + 60, sticker.y + 60);
+at = await buttonBox();
+check(at === null, 'a sticker that is not an <img>, on an opaque panel, gets no button (not one for the big picture behind it)', JSON.stringify(at));
+await hover(700, 120); // on the big picture, whose corner is off-screen
+at = await buttonBox();
+check(at?.x === 2 && at?.y === 2, 'a picture whose corner is off-screen: the button sits 2 px inside its visible corner', JSON.stringify(at));
+await hover(plain.x + 100, plain.y + 75); // and back: it follows the picture under the pointer
+at = await buttonBox();
+check(at?.x === plain.x + 2 && at?.y === plain.y + 2, 'moving back, the button follows the picture under the pointer', JSON.stringify(at));
+await page.goto(SITE + '/');
+await page.waitForFunction(() => document.querySelector('#big').complete && document.querySelector('zboard-clipper'));
 
 // Switched off in the popup: no button.
 await sw.evaluate(() => chrome.storage.local.set({ hover: false }));
