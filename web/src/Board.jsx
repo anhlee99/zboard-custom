@@ -1492,6 +1492,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     if (touches.current.size >= 2) {
       if (cur?.handedOff || touches.current.size > 2) return;
       clearTimeout(cur?.timer);
+      if (cur?.el) delete cur.el.dataset.lift;
       const [a, b] = [...touches.current.values()];
       touchG.current = { type: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, v0: S.current.view };
       return;
@@ -1516,10 +1517,14 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
     } else if (cardEl) {
       const id = cardEl.dataset.cardId;
       if (S.current.editing === id) return (touchG.current = null);
-      const g = { ...base, type: 'hold-card', card: id };
+      // Holding: the card swells a little with a growing wobble; when it comes free, a big cartoon
+      // shake (styles.css, [data-lift]). Cleared when the finger lifts or the touch turns into a pan.
+      const g = { ...base, type: 'hold-card', card: id, el: cardEl };
+      cardEl.dataset.lift = 'hold';
       g.timer = setTimeout(() => {
         if (touchG.current !== g) return;
         g.handedOff = true;
+        cardEl.dataset.lift = 'pop';
         navigator.vibrate?.(15);
         setSel(new Set([id]));
         if (S.current.editing) document.activeElement?.blur?.();
@@ -1563,6 +1568,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
         // A quick swipe pans, even when it starts on a card.
         if (!g.fired && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) > 8) {
           clearTimeout(g.timer);
+          if (g.el) delete g.el.dataset.lift;
           const v = S.current.view;
           touchG.current = { type: 'pan', id: g.id, sx: g.sx, sy: g.sy, vx: v.x, vy: v.y };
           setView((vv) => ({ ...vv, x: v.x + e.clientX - g.sx, y: v.y + e.clientY - g.sy }));
@@ -1587,6 +1593,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
       }
       if (e.pointerId !== g.id) return;
       clearTimeout(g.timer);
+      if (g.el) delete g.el.dataset.lift;
       touchG.current = null;
       if (g.handedOff || g.fired || g.type === 'pan' || e.type === 'pointercancel') return;
       if (g.type === 'hold-card') {

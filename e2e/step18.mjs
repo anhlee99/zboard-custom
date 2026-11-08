@@ -23,29 +23,34 @@ check(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), 'phone
 const img = card.locator('img').first();
 check((await img.evaluate((e) => getComputedStyle(e).userSelect)) === 'none', 'card images cannot be selected or long-pressed into the browser menu');
 
-// Tap selects; the move handle appears off the top-left corner.
+// Tap selects. Moving is hold-and-drag on the card itself: there is no separate move handle.
 const box0 = await card.boundingBox();
 await page.touchscreen.tap(box0.x + box0.width / 2, box0.y + box0.height / 2);
 await sleep(400);
-const handle = card.locator('[data-handle="move"]');
-check(await handle.isVisible(), 'tapping a card shows the move handle');
-const hb = await handle.boundingBox();
-check(hb.width >= 36 && hb.width <= 44 && Math.abs(hb.x + hb.width / 2 - box0.x) < 3 && Math.abs(hb.y + hb.height / 2 - box0.y) < 3, 'handle is about 40 px on screen, centred on the top-left corner', JSON.stringify({ hb, box0 }));
+check((await card.locator('[data-handle="move"]').count()) === 0 && (await card.locator('[data-handle="arrow"]').isVisible()), 'a selected card shows the arrow and resize handles, no move handle');
 
-// Drag the handle with a real touch: it moves at once, no hold.
+// Hold the card, then drag it with a real touch: it follows the finger.
 const cdp = await context.newCDPSession(page);
 const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
-const sx = hb.x + hb.width / 2;
-const sy = hb.y + hb.height / 2;
+const sx = box0.x + box0.width / 2;
+const sy = box0.y + box0.height / 2;
+const lift = () => card.evaluate((el) => el.dataset.lift || '');
 await touch('touchStart', sx, sy);
+await sleep(120);
+check((await lift()) === 'hold', 'while held, the card swells and wobbles', await lift());
+await sleep(380);
+check((await lift()) === 'pop', 'when it comes free, it pops with a big shake', await lift());
+await sleep(200);
 for (let i = 1; i <= 10; i++) {
   await touch('touchMove', sx + i * 8, sy + i * 12);
   await sleep(16);
 }
+check((await lift()) === 'pop', 'and stays lifted while dragged');
 await touch('touchEnd');
 await sleep(800);
+check((await lift()) === '', 'letting go puts it down');
 const box1 = await card.boundingBox();
-check(Math.abs(box1.x - box0.x - 80) < 3 && Math.abs(box1.y - box0.y - 120) < 3, 'dragging the handle moves the card with the finger', JSON.stringify({ dx: box1.x - box0.x, dy: box1.y - box0.y }));
+check(Math.abs(box1.x - box0.x - 80) < 4 && Math.abs(box1.y - box0.y - 120) < 4, 'holding and dragging the card moves it with the finger', JSON.stringify({ dx: box1.x - box0.x, dy: box1.y - box0.y }));
 const saved = (await api('GET', `/api/boards/${boardId}`)).cards.find((c) => c.id === id);
 check(saved.x !== 120 || saved.y !== 160, 'the new spot is saved', JSON.stringify([saved.x, saved.y]));
 
@@ -96,7 +101,7 @@ await page.touchscreen.tap(pre2.x + pre2.width / 2, pre2.y + 40);
 await sleep(400);
 const cb = await card.boundingBox();
 const ah = await card.locator('[data-handle="arrow"]').boundingBox();
-check(ah && ah.width >= 36 && Math.abs(ah.x + ah.width / 2 - (cb.x + cb.width)) < 3 && Math.abs(ah.y + ah.height / 2 - cb.y) < 3, 'a large connect handle sits on the top-right corner', JSON.stringify({ ah, cb }));
+check(ah && ah.width >= 44 && ah.y + ah.height <= cb.y && Math.abs(ah.x + ah.width / 2 - (cb.x + cb.width / 2)) < 60, 'a finger-sized connect handle sits in the pill above the card', JSON.stringify({ ah, cb }));
 const tb = await page.locator(`[data-card-id="${other.id}"]`).boundingBox();
 const ax = ah.x + ah.width / 2;
 const ay = ah.y + ah.height / 2;

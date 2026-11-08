@@ -571,25 +571,25 @@ export const CardView = memo(function CardView(props) {
       {card.type !== 'image' && card.type !== 'column' && <LabelChips labels={card.data.labels} />}
       {selected && !inColumn && !editing && (
         <>
-          {/* Touch screens: drag from here right away instead of holding the card. Same size on screen at any zoom. */}
-          {TOUCH && (
-            <div className="handle handle-move" data-handle="move" aria-label="Move" style={{ '--hs': 1 / (props.settledS || 1) }}>
-              <Icon name="move" size={18} />
-            </div>
-          )}
+          {/* Touch screens: an Arrow button above the card (finger-sized, keeps the corners clear) and a
+              circle on the bottom-right corner to resize by pulling it. Moving is hold-and-drag on the
+              card itself. Same size on screen at any zoom. */}
           {TOUCH ? (
-            <div className="handle handle-move handle-resize-touch" data-handle="resize" aria-label="Resize" style={{ '--hs': 1 / (props.settledS || 1) }}>
-              <Icon name="resize" size={18} />
-            </div>
+            <>
+              <div className="handle-pill" style={{ '--hs': 1 / (props.settledS || 1) }}>
+                <div className="handle pill-btn pill-arrow" data-handle="arrow" aria-label="Connect with an arrow">
+                  <Icon name="arrowEnd" size={20} />
+                </div>
+              </div>
+              <div className="handle handle-move handle-resize-touch" data-handle="resize" aria-label="Resize" style={{ '--hs': 1 / (props.settledS || 1) }}>
+                <Icon name="resize" size={18} />
+              </div>
+            </>
           ) : (
-            <div className="handle handle-resize" data-handle="resize" data-tip="Resize" />
-          )}
-          {TOUCH ? (
-            <div className="handle handle-move handle-arrow-touch" data-handle="arrow" aria-label="Connect with an arrow" style={{ '--hs': 1 / (props.settledS || 1) }}>
-              <Icon name="arrowEnd" size={18} />
-            </div>
-          ) : (
-            <div className="handle handle-arrow" data-handle="arrow" data-tip="Drag to a card to connect" />
+            <>
+              <div className="handle handle-resize" data-handle="resize" data-tip="Resize" />
+              <div className="handle handle-arrow" data-handle="arrow" data-tip="Drag to a card to connect" />
+            </>
           )}
         </>
       )}
