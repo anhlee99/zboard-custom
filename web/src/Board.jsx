@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, openEvents, uploadFiles } from './api.js';
-import { CardView, youtubeId } from './Cards.jsx';
+import { CardView, SafeImg, youtubeId } from './Cards.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import CoverPicker from './Cover.jsx';
 import ImageEditor from './ImageEditor.jsx';
@@ -2367,7 +2367,7 @@ export default function Board({ boardId, focus, onInfo, savedOpen, onCloseSaved,
 
       {lightbox && (
         <div className="lightbox" onClick={() => setLightbox(null)}>
-          <img src={`/files/${lightbox}`} alt="" />
+          <SafeImg src={`/files/${lightbox}`} alt="" />
         </div>
       )}
 

@@ -18,12 +18,20 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-async function cacheFirst(cacheName, req) {
+// `key` lets retries (?r=1, added by the page after a dropped request) share one cache entry.
+// A request that fails outright (a weak mobile signal) is tried once more before giving up.
+async function cacheFirst(cacheName, req, key = req) {
   const cache = await caches.open(cacheName);
-  const hit = await cache.match(req);
+  const hit = await cache.match(key);
   if (hit) return hit;
-  const res = await fetch(req);
-  if (res.ok) cache.put(req, res.clone());
+  let res;
+  try {
+    res = await fetch(req);
+  } catch {
+    await new Promise((r) => setTimeout(r, 800));
+    res = await fetch(req);
+  }
+  if (res.ok) cache.put(key, res.clone());
   return res;
 }
 
@@ -34,9 +42,9 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== self.location.origin) return;
   // Live data always goes to the network.
   if (url.pathname.startsWith('/api/')) return;
-  // Thumbnails never change for a given id.
-  if (/^\/files\/[^/]+\/(thumb|mini)$/.test(url.pathname)) {
-    e.respondWith(cacheFirst(IMAGE_CACHE, req));
+  // Previews (every size) never change for a given id.
+  if (/^\/files\/[^/]+\/(thumb|mini|micro)$/.test(url.pathname)) {
+    e.respondWith(cacheFirst(IMAGE_CACHE, req, url.pathname));
     return;
   }
   if (url.pathname.startsWith('/files/')) return;

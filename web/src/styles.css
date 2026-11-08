@@ -508,6 +508,40 @@ input {
   height: 100%;
   object-fit: cover;
 }
+
+/* Pictures still loading (or retrying after a dropped request) are invisible, never the browser's
+   broken-image icon: the card's colour shows, with a soft light sweeping across it. See SafeImg. */
+img[data-img] {
+  transition: opacity 0.25s ease;
+}
+img[data-img='loading'] {
+  opacity: 0;
+}
+.img-wrap:has(img[data-img='loading'])::after,
+.video-frame:has(> img[data-img='loading'])::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.28) 50%, transparent 70%);
+  background-size: 250% 100%;
+  animation: img-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes img-shimmer {
+  from {
+    background-position: 125% 0;
+  }
+  to {
+    background-position: -125% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .img-wrap:has(img[data-img='loading'])::after,
+  .video-frame:has(> img[data-img='loading'])::after {
+    animation: none;
+    background: rgba(255, 255, 255, 0.12);
+  }
+}
 .caption,
 .caption-input {
   padding: 8px 12px;
